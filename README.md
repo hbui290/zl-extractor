@@ -6,9 +6,11 @@ Portable Codex skill for safely extracting Zalo PC chat history into an organize
 
 - Maps a requested Zalo conversation from the logged-in app instead of guessing DB filenames.
 - Reads encrypted/app-managed local messages through Zalo's read-only runtime.
+- Collects links from message text and the verified conversation's pinned content.
 - Exports UTF-8 TXT/CSV messages and optionally retrieves requested attachments.
 - Uses the authenticated Zalo renderer for session-bound media URLs.
 - Sorts messages and attachments deterministically and records hashes/statuses.
+- Skips GIF and sticker binaries by default while preserving their metadata.
 
 ## Export layout
 
@@ -17,13 +19,12 @@ Portable Codex skill for safely extracting Zalo PC chat history into an organize
   01-messages/
     messages.txt
     messages.csv
+    links.csv
   02-attachments/
     images/
-    gifs/
     videos/
     audio/
     files/
-    stickers/
     other/
   03-reports/
     attachments.csv
@@ -42,7 +43,7 @@ The workflow resolves machine-specific paths at runtime. It does not include or 
 
 ## Attachment status
 
-`copied`, `downloaded`, `preview_only`, `not_found`, `remote_only`, `failed_404`, `failed_500`, `network_error`, and `unreadable` are recorded per media row. Missing or expired media makes the export `PARTIAL`; message text and metadata are preserved.
+`copied`, `downloaded`, `preview_only`, `not_found`, `remote_only`, `failed_404`, `failed_500`, `network_error`, `unreadable`, and `skipped_by_policy` are recorded per media row. GIF/sticker rows use `skipped_by_policy`; missing or expired in-scope media makes the export `PARTIAL`. A requested link export is also `PARTIAL` when pinned content cannot be audited.
 
 ## Safety
 
