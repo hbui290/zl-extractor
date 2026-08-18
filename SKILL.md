@@ -5,52 +5,61 @@ description: Use when a user asks to find, read, recover, inspect, or export Zal
 
 # ZL Extractor
 
-Use Zalo's logged-in runtime as the read/decryption boundary. Map the requested conversation inside Zalo, paginate records without skipping, write an organized export, verify it, and leave the source data unchanged.
+Use Zalo's logged-in runtime as the read/decryption boundary. Resolve the exact
+conversation, read it without writing to Zalo, export an organized folder, and
+report what was verified versus what remains partial.
 
-## Safety and portability
+## Non-negotiables
 
 - Process only the user's local account or an explicitly authorized scope.
-- Never brute-force keys, crack encryption, upload chat data, or use send/delete/import APIs.
-- Treat a live `Core/Message` partition as app-managed local data, not an official export.
-- Resolve every path at runtime; never reuse a username, account ID, group ID, app path, port, or output path from another machine.
-- Keep raw message bodies, signed URLs, tokens, and attachment contents out of terminal output.
+- Never crack encryption, extract keys, upload chat data, or call send/delete/import APIs.
+- A live `Core/Message` partition is app-managed local data, not automatically an official backup.
+- Discover every machine-specific path, account ID, conversation ID, and CDP port during the current run.
+- Keep raw message bodies, signed URLs, tokens, and opaque attachment objects out of terminal output.
+- Leave the source Zalo data unchanged. Temporary copies must include DB `-wal` and `-shm` companions.
 
-Use these runtime variables:
+## Runtime discovery
+
+Use variables, never paths copied from a previous machine:
 
 ```text
 USER_HOME       = os.homedir() / Path.home()
-ZALO_DATA_ROOT  = verified ZaloData directory
+ZALO_DATA_ROOT  = verified ZaloData directory for the active user
 DB_ROOT         = ZALO_DATA_ROOT/Database/_production
-ACCOUNT_ID      = discovered account directory
-ZALO_APP_PATH   = discovered Zalo.app bundle
-CDP_PORT        = temporary free loopback port
-OUTPUT_ROOT     = absolute user/workspace output directory
+ACCOUNT_ID      = discovered active account directory
+ZALO_APP_PATH   = discovered Zalo.app bundle containing app.asar
+CDP_PORT        = free loopback port selected for this run
+OUTPUT_ROOT     = absolute output directory
 TEMP_ROOT       = fresh temporary directory
 ```
 
+On macOS, verify `USER_HOME/Library/Application Support/ZaloData` and its
+`Database/_production` directory first. On other systems, use the OS path API;
+do not apply the macOS path literally. Search for an official export separately
+under the verified media/account paths (`.zdb` or `backup_zalo_*.zl.zip`).
+
 ## Workflow
 
-### 1. Resolve and verify the conversation
+### 1. Resolve the conversation
 
-1. Verify `ZALO_DATA_ROOT`, `DB_ROOT`, and the active account at runtime.
-2. Use the Zalo renderer's group list (`Gm1y` on tested builds), not a filename, to map the exact display name to `userId`, `globalId`, type, and member count.
-3. Require an independent check such as the open conversation, recent sender/time, preview text, member count, or conversation-key membership. Stop if the name is ambiguous.
-4. Treat a DB error such as `file is not a database` as encrypted/app-managed state. Do not infer that messages are missing.
+1. Discover the active account under `DB_ROOT` and correlate it with the logged-in Zalo renderer.
+2. Use Zalo's group/conversation list (the tested build exposes `Gm1y`) to map the exact display name to its ID and metadata. Do not identify a group from a DB filename.
+3. Require an independent check: opened conversation, preview text, recent sender/time, member count, or conversation-key membership. Stop if the name is ambiguous.
+4. A `file is not a database` error means encrypted/app-managed state may be present; it does not prove that messages are missing.
 
-### 1a. Audit pinned content and links
+The usual group partition is `DB_ROOT/ACCOUNT_ID/Core/Message/g<GROUP_ID>.db`,
+but mapping must come from Zalo first. Official exports and live partitions are
+different sources.
 
-When links are requested, inspect the verified conversation's pinned-message/pinned-content panel through the logged-in Zalo renderer in addition to `loadMessagesForBackup`. Pinned content may not be present in the normal message stream.
+### 2. Read through the logged-in runtime
 
-- Bind the pin lookup to the exact verified conversation ID; do not use Zalo's global pinned-chat list as a substitute.
-- Discover the current build's read-only pin state/API/UI data at runtime. Pin APIs and field names are version-dependent; do not guess an endpoint or call unpin/delete actions.
-- Extract URLs from both message text and pinned content. Write link rows with `source=message` or `source=pin`, preserve the pin/message reference when available, and deduplicate only exact repeated `(conversation, source record, URL)` occurrences.
-- If the pin panel cannot be enumerated, set `pinAuditStatus=unknown`/`blocked` in the manifest and do not claim that all links were exported. A text-only link check is not sufficient.
+Use a temporary loopback CDP connection only when needed. Select the page titled
+`Zalo` from `/json/list`. Use the app's read-only `DataAccess` service; module
+IDs such as `AY7h` are version-dependent. If the tested module is absent, inspect
+the installed app bundle read-only for methods such as
+`loadMessagesForBackup`, `countMessages`, and `getAllConvKeys`.
 
-### 2. Read through Zalo
-
-Use a temporary CDP connection only when needed. Select the page titled `Zalo` from `/json/list`. The tested build exposes read `DataAccess` through `AY7h`; module IDs may change, so inspect the installed app read-only after updates and locate the service containing `loadMessagesForBackup`/`countMessages`.
-
-Paginate by the app cursor, not SQL `OFFSET`:
+Paginate with the app cursor, never SQL `OFFSET`:
 
 ```text
 cursor = "9999999999999"
@@ -61,100 +70,78 @@ repeat:
   cursor = msgId of the last record
 ```
 
-Guard against repeated cursors and cap pages. Normalize only required fields, prefer `msgText` then textual `content`, and label media/system rows instead of dumping opaque objects. Sort final messages oldest-to-newest by `sendDttm`, then `msgId`. Extract URLs from normalized text and relevant attachment fields, but treat that set as incomplete until the pinned-content audit above has run.
+Guard against a repeated cursor and cap pages. Normalize only the fields needed
+for output (`conversation_id`, message ID, timestamps, sender, type, text,
+quote/reference, and attachment metadata), then sort oldest-to-newest by
+`sendDttm`, `msgId`. Message-text links are incomplete until the pin audit runs.
 
-### 3. Export into a deterministic folder
+### 3. Process links and pinned content
 
-Create this layout whenever the user asks for a folder export:
+When links are in scope, read [references/links-and-pins.md](references/links-and-pins.md)
+before extraction. It defines the exact pin audit, URL dedupe boundary,
+context merge, classification rules, review queue, and link output schema.
+
+Run the bundled checks after producing the link files:
+
+```bash
+python3 scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 scripts/test_link_rules.py
+python3 scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+```
+
+`write_link_review.py` writes review files. `audit_links.py` is read-only and
+returns `0=PASS`, `2=PARTIAL`, `1=FAIL`.
+
+### 4. Retrieve attachments only when requested
+
+Read [references/attachments.md](references/attachments.md) before copying or
+downloading binaries. GIFs and stickers are excluded by default and recorded as
+`skipped_by_policy`; do not silently omit other requested media.
+
+### 5. Write the export
+
+Write outside the source DB, under a resolved absolute path:
 
 ```text
 <OUTPUT_ROOT>/<slug>-export-<timestamp>/
-  01-messages/
-    messages.txt
-    messages.csv
-    links.csv
-  02-attachments/
-    images/
-    videos/
-    audio/
-    files/
-    other/
-  03-reports/
-    attachments.csv
-    manifest.json
+  01-messages/       messages.txt, messages.csv, links.csv, category views
+  02-attachments/    only when binary media is requested
+  03-reports/        raw ledger, review files, media audit, manifest.json
 ```
 
-Use UTF-8 and real CSV quoting. Sort message and attachment rows oldest-to-newest by `sendDttm`, `msgId`, then media ordinal. Use a zero-padded sequence in both the CSV and filenames, for example:
+Use UTF-8 and real CSV quoting. Preserve original message text. Use collision-
+safe filenames and relative paths in CSV/manifest. Never overwrite existing
+output files; rerun the audit after moving anything.
+
+### 6. Validate and report
+
+Read [references/verification.md](references/verification.md) before closeout.
+Validation must come from the raw ledger/source messages, not only the
+classifier's report. Verify conversation mapping, counts, unique message IDs,
+CSV round-trip, dedupe/media partitions, path containment, hashes, and pin
+coverage. Keep the source-write flag false.
+
+Use these statuses:
 
 ```text
-000042-<msg_id>-01.jpg
+COMPLETE = mapping, requested records, links/pins, and requested media are verified
+PARTIAL  = records are readable but pin coverage, classifications, or requested media remain unresolved
+BLOCKED  = no valid source/runtime, ambiguous conversation, or inconsistent source
 ```
 
-Keep relative CSV paths synchronized with the final file locations. If a file is moved, rewrite the CSV/manifest paths and rerun existence/hash checks. Failed or metadata-only records stay in `03-reports/attachments.csv` with an empty output path; never silently omit them.
+Never call a text export complete when the requested pin audit is unknown or
+blocked. An expected GIF/sticker exclusion does not make an otherwise complete
+in-scope export partial.
 
-Persist requested message/pin links in `01-messages/links.csv`. Signed CDN/media URLs belong in the attachment audit unless the user explicitly asks for those raw URLs. The CSV should include at least `sequence`, `message_id` or `pin_id`, `timestamp`, `source`, and `url`.
+### 7. Clean up
 
-### 4. Optional attachment retrieval
+Remove temporary scripts, extracted app bundles, cloned repositories, and
+temporary package directories. Close the temporary CDP session and relaunch
+Zalo normally if it was started with a debug port. Never delete the original
+Zalo data without a separately approved, recoverable plan.
 
-Only retrieve binary attachments when the user explicitly requests them. Inspect runtime fields such as `msgType`, `localPath`, `folderPath`, `previewThumb`, filename, dimensions, and size. Accept local paths only when they remain under verified Zalo media roots.
-
-Attachment scope excludes GIFs and stickers by default: do not copy or fetch them. Preserve their metadata in `attachments.csv` as `status=skipped_by_policy`; this expected exclusion does not make an otherwise complete in-scope export `PARTIAL`. If the user explicitly overrides this policy, treat them as requested media and verify them normally.
-
-Use this source order:
-
-1. Verified local original → copy to the type folder.
-2. Validated local preview → save as `preview_only`.
-3. URL fields already present in the record (`oriUrl`, `hdUrl`, `normalUrl`, `thumbUrl`) → fetch through the logged-in Zalo renderer with `credentials: include`.
-
-Do not mutate URLs, brute-force paths, contact unrelated hosts, or use an unauthenticated Node fetch as the final source. A direct Node request can be a diagnostic only; a renderer `200` with valid image MIME/magic bytes is the authoritative download. Choose the extension from verified bytes/MIME, not a bad record filename.
-
-Record these fields in `03-reports/attachments.csv`:
-
-```text
-sequence, message_id, timestamp, sender, type, original_name,
-relative_output_path, size, sha256, source_kind, status, error
-```
-
-Use explicit statuses:
-
-```text
-copied       = verified local binary copied
-downloaded   = renderer/session returned and saved a valid binary
-preview_only = only a validated preview exists
-not_found    = no usable local file or URL
-remote_only  = metadata/remote reference exists but binary was not retrieved
-failed_404   = renderer received HTTP 404; likely expired/deleted media URL
-failed_500   = renderer received HTTP 500; server error, retry once if useful
-network_error= no HTTP response; keep the conclusion uncertain
-unreadable   = file/response fails MIME, magic-byte, or hash validation
-skipped_by_policy = GIF or sticker intentionally excluded from binary retrieval
-```
-
-Do not print or persist raw signed URLs unless the user explicitly asks for them; use a redacted host/status or fingerprint for audit.
-
-### 5. Validate and report
-
-Before claiming completion, verify:
-
-- exact conversation mapping and independent content check;
-- counted records equal exported records for the snapshot;
-- when links are in scope, message-text URLs are all represented in `links.csv`, pin enumeration completed, and pin/message source counts are recorded;
-- CSV parses with Unicode, quotes, commas, and newlines;
-- message IDs are unique or duplicates are explained;
-- first/middle/last samples and timestamp range are plausible;
-- expected layout directories exist;
-- every non-empty attachment path stays inside the export folder;
-- every `copied`/`downloaded` file exists, is non-empty, has valid MIME/magic bytes, and matches its SHA-256;
-- attachment status counts sum to requested media rows, including intentional `skipped_by_policy` rows;
-- `sourceWriteIssued: false` and source DB metadata are recorded.
-
-Use `COMPLETE` only when the requested scope is fully verified. If links were requested, an unknown/blocked pin audit makes the result `PARTIAL` even when message-text links are complete. Any missing, expired, failed, or preview-only in-scope attachment makes the result `PARTIAL`; GIF/sticker rows marked `skipped_by_policy` are expected. Preserve text and metadata. A renderer 404 means the media URL is unavailable, not that message decryption failed. A renderer 500 or network error is not proof of permanent deletion.
-
-### 6. Cleanup
-
-Remove temporary scripts, extracted app bundles, cloned repositories, and package directories created for the run. Close the temporary CDP session, relaunch Zalo normally, and verify the debug port is closed. Never delete the original Zalo data unless separately requested with a recoverable plan.
-
-Completion report:
+## Completion report
 
 ```text
 Group / conversation ID:
