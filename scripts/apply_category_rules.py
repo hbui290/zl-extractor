@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from export_paths import export_paths
+
 
 FIELDS = [
     "sequence", "message_id", "message_ids", "pin_id", "pin_ids", "timestamp", "first_seen", "last_seen",
@@ -113,8 +115,9 @@ def main():
     parser.add_argument("export_root", type=Path)
     args = parser.parse_args()
     root = args.export_root.resolve()
-    messages = root / "01-messages"
-    reports = root / "03-reports"
+    paths = export_paths(root)
+    messages = paths["machine"]
+    reports = paths["metadata"]
 
     raw_classified_path = reports / "links-classified-occurrences.csv"
     raw_classified = [update_row(row) for row in read_csv(raw_classified_path)]
@@ -139,7 +142,7 @@ def main():
     write_csv(messages / "links.csv", primary)
     write_csv(messages / "links-classified.csv", primary)
     write_csv(media_path, media)
-    category_dir = messages / "links-by-category"
+    category_dir = paths["categories"]
     category_dir.mkdir(parents=True, exist_ok=True)
     for old in category_dir.glob("*.csv"):
         old.unlink()

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from export_paths import export_paths
+
 
 def read_csv(path):
     with path.open(newline="", encoding="utf-8") as handle:
@@ -40,13 +42,14 @@ def main():
     parser.add_argument("export_root", type=Path)
     args = parser.parse_args()
     root = args.export_root.resolve()
-    messages = root / "01-messages"
-    reports = root / "03-reports"
-    raw_path = reports / "links-classified-occurrences.csv"
+    paths = export_paths(root)
+    messages = paths["machine"]
+    reports = paths["metadata"]
+    raw_path = messages / "links-classified-occurrences.csv"
     if not raw_path.exists():
-        raw_path = reports / "links-occurrences.csv"
+        raw_path = messages / "links-occurrences.csv"
     primary_path = messages / "links.csv"
-    media_path = reports / "zalo-media-links.csv"
+    media_path = messages / "zalo-media-links.csv"
     manifest_path = reports / "manifest.json"
     classification_report_path = reports / "link-classification.json"
 
@@ -67,7 +70,7 @@ def main():
     raw_media = {url: rows for url, rows in raw_groups.items() if is_internal_media(url)}
     primary_urls = [exact_url(row) for row in primary]
     media_urls = [exact_url(row) for row in media]
-    resolution_path = reports / "link-review-resolutions.csv"
+    resolution_path = messages / "link-review-resolutions.csv"
     resolutions = {}
     if resolution_path.exists():
         for row in read_csv(resolution_path):
@@ -86,7 +89,7 @@ def main():
     }
     category_rows = 0
     category_counts = {}
-    category_dir = messages / "links-by-category"
+    category_dir = paths["categories"]
     if category_dir.exists():
         for path in sorted(category_dir.glob("*.csv")):
             count = len(read_csv(path))
@@ -94,9 +97,9 @@ def main():
             category_rows += count
 
     if len(primary_urls) != len(set(primary_urls)):
-        failures.append("duplicate canonical URL remains in 01-messages/links.csv")
+        failures.append(f"duplicate canonical URL remains in {primary_path.relative_to(root)}")
     if any(is_internal_media(url) for url in primary_urls):
-        failures.append("internal media URL leaked into 01-messages/links.csv")
+        failures.append(f"internal media URL leaked into {primary_path.relative_to(root)}")
     if set(primary_urls) != set(raw_user):
         failures.append("primary user-facing URL set does not match exact URL partition from raw ledger")
     if set(media_urls) != set(raw_media):
@@ -111,7 +114,7 @@ def main():
         failures.append("combined occurrence sum does not equal raw occurrence rows")
     if any(not row.get("message_ids") and not row.get("pin_ids") for row in primary):
         failures.append("primary row is missing message_ids and pin_ids")
-    review_path = reports / "link-review.csv"
+    review_path = messages / "link-review.csv"
     review_file_rows = read_csv(review_path) if review_path.exists() else []
     if review_rows and not review_path.exists():
         failures.append("classification review queue is missing")

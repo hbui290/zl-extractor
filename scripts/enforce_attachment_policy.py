@@ -5,6 +5,8 @@ import argparse
 import csv
 from pathlib import Path
 
+from export_paths import export_paths
+
 
 def is_excluded(row):
     kind = " ".join((row.get(field) or "").lower() for field in ("type", "source_kind"))
@@ -16,7 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("export_root", type=Path)
     args = parser.parse_args()
-    path = args.export_root.resolve() / "03-reports" / "attachments.csv"
+    paths = export_paths(args.export_root)
+    path = paths["machine"] / "attachments.csv"
     if not path.exists():
         print(f"policy_rows=0 status=SKIPPED output={path}")
         return

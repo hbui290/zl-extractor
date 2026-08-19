@@ -6,6 +6,8 @@ import csv
 import json
 from pathlib import Path
 
+from export_paths import export_paths
+
 
 def read_csv(path):
     with path.open(newline="", encoding="utf-8") as handle:
@@ -17,9 +19,12 @@ def main():
     parser.add_argument("export_root", type=Path)
     args = parser.parse_args()
     root = args.export_root.resolve()
-    source = root / "01-messages" / "links-classified.csv"
-    output = root / "03-reports" / "link-review.csv"
-    resolution_path = root / "03-reports" / "link-review-resolutions.csv"
+    paths = export_paths(root)
+    machine = paths["machine"]
+    metadata = paths["metadata"]
+    source = machine / "links-classified.csv"
+    output = machine / "link-review.csv"
+    resolution_path = machine / "link-review-resolutions.csv"
     resolutions = {}
     if resolution_path.exists():
         for resolved in read_csv(resolution_path):
@@ -62,7 +67,7 @@ def main():
         writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
-    report_path = root / "03-reports" / "link-classification.json"
+    report_path = metadata / "link-classification.json"
     if report_path.exists():
         report = json.loads(report_path.read_text(encoding="utf-8"))
         report["classificationReviewRows"] = len(rows)
@@ -70,10 +75,11 @@ def main():
         report["reviewResolutionRows"] = len(resolutions)
         report.setdefault("verification", {})["classificationQueue"] = len(rows)
         report["verification"]["reviewResolutionRows"] = len(resolutions)
-        if isinstance(report.get("outputs"), list) and "03-reports/link-review-resolutions.csv" not in report["outputs"]:
-            report["outputs"].append("03-reports/link-review-resolutions.csv")
+        resolution_output = "raw/link-review-resolutions.csv" if paths["new_layout"] else "03-reports/link-review-resolutions.csv"
+        if isinstance(report.get("outputs"), list) and resolution_output not in report["outputs"]:
+            report["outputs"].append(resolution_output)
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    manifest_path = root / "03-reports" / "manifest.json"
+    manifest_path = metadata / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         links = manifest.setdefault("links", {})

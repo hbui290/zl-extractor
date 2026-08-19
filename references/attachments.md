@@ -27,13 +27,13 @@ final source.
 Write files under:
 
 ```text
-02-attachments/
+attachments/
   images/
   videos/
   audio/
   files/
   other/
-03-reports/attachments.csv
+raw/attachments.csv
 ```
 
 Use a collision-safe name based on message ID and ordinal. Choose the extension

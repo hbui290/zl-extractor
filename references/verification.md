@@ -23,6 +23,8 @@ Verify all applicable invariants:
 - CSV files round-trip with Unicode, commas, quotes, and embedded newlines intact.
 - Output paths stay inside the export; copied/downloaded binaries are non-empty and hash-match.
 - `sourceWriteIssued: false` and source DB metadata are recorded.
+- `readable/` contains the index, chronological message view, link views, media view, and review view.
+- Human views reconcile to raw counts; they may reformat text but must not invent or drop in-scope records.
 
 If an invariant fails, fix the source transformation. Never edit only a report
 JSON to make counts agree.
@@ -33,6 +35,8 @@ Run from the skill directory:
 
 ```bash
 python3 scripts/test_link_rules.py
+python3 scripts/test_human_views.py
+python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
@@ -53,8 +57,8 @@ until it is independently resolved in the resolution ledger.
 ## Idempotence and stress checks
 
 When changing link rules, review logic, or output transforms, run the adversarial
-rule test and rerun the pipeline on a copy. The second run should not add rows,
-reopen resolved URLs, or change output hashes. For a large export, use a
+rule and human-view tests and rerun the pipeline on a copy. The second run
+should not add rows, reopen resolved URLs, or change output hashes. For a large export, use a
 synthetic fixture to verify dedupe, partition counts, and duplicate detection;
 do not use private chat content as a test fixture.
 

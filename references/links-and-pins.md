@@ -17,7 +17,7 @@ may not be in the normal message stream.
 
 ## Occurrence ledger and exact dedupe
 
-1. Write every unmodified occurrence to `03-reports/links-occurrences.csv` before dedupe.
+1. Write every unmodified occurrence to `raw/links-occurrences.csv` before dedupe.
 2. Set `canonical_url = url.strip()` only. Preserve scheme, host, port, path, query, fragment, encoding, and every affiliate/tracking parameter.
 3. Do not resolve redirects, fuzzy-match domains, or merge URL variants. Different parameters or paths are different canonical URLs.
 4. Group message and pin occurrences by `canonical_url`, then read every related message, quote, and pin record before classifying.
@@ -34,7 +34,7 @@ observed_categories, context_alternatives
 ```
 
 Internal Zalo CDN/media references are classified as `zalo-media` and written to
-`03-reports/zalo-media-links.csv`, never to the user-facing link index.
+`raw/zalo-media-links.csv`, never to the user-facing link index.
 
 ## Classification
 
@@ -86,23 +86,25 @@ Write the review queue after classification:
 python3 scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-This command writes `03-reports/link-review.csv`; it is not read-only. Resolve
-reviewed rows in `link-review-resolutions.csv` with `status=rule_verified` or
+This command writes `raw/link-review.csv`; it is not read-only. Resolve
+reviewed rows in `raw/link-review-resolutions.csv` with `status=rule_verified` or
 `resolved`. Rerunning the writer preserves resolved rows and reopens only
 unresolved rows. A resolution records evidence of review; it does not justify
 inventing a category.
 
-The canonical outputs are built from deduplicated rows only:
+The canonical machine outputs are built from deduplicated rows only:
 
 ```text
-01-messages/links.csv
-01-messages/links-classified.csv
-01-messages/links-by-category/<category>.csv
-03-reports/links-occurrences.csv
-03-reports/zalo-media-links.csv
-03-reports/link-review.csv
-03-reports/link-review-resolutions.csv
+raw/links.csv
+raw/links-classified.csv
+raw/links-by-category/<category>.csv
+raw/links-occurrences.csv
+raw/zalo-media-links.csv
+raw/link-review.csv
+raw/link-review-resolutions.csv
 ```
 
-Category views are filtered views, not another occurrence ledger. Sort them by
-category, time, and message/pin sequence, and keep paths relative to the export.
+Human-facing views are written separately to `readable/links.md` and
+`readable/links-by-category/<category>.md`. Category views are filtered views,
+not another occurrence ledger. Sort them by category, time, and message/pin
+sequence, and keep paths relative to the export.

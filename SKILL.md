@@ -101,26 +101,42 @@ downloading binaries. GIFs and stickers are excluded by default and recorded as
 
 ### 5. Write the export
 
-Write outside the source DB, under a resolved absolute path:
+Read [references/readable-output.md](references/readable-output.md) before
+writing a folder intended for people. Write outside the source DB, under a
+resolved absolute path, with the readable layer first:
 
 ```text
 <OUTPUT_ROOT>/<slug>-export-<timestamp>/
-  01-messages/       messages.txt, messages.csv, links.csv, category views
-  02-attachments/    only when binary media is requested
-  03-reports/        raw ledger, review files, media audit, manifest.json
+  readable/          index, chronological messages, links, categories, media, review
+  attachments/       only requested and verified binaries
+  raw/               exact CSV/JSON inputs for audit/reprocessing
+  source/            manifest, classification report, provenance
 ```
 
-Use UTF-8 and real CSV quoting. Preserve original message text. Use collision-
-safe filenames and relative paths in CSV/manifest. Never overwrite existing
-output files; rerun the audit after moving anything.
+Generate the human views after the normalized message/link/media files exist:
+
+```bash
+python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+```
+
+`readable/messages.md` is chronological and grouped by local date. `links.md`
+and `links-by-category/` show context, category, confidence, occurrences, and
+clickable labels. `media.md` and `review.md` are compact tables/queues. Keep
+the original text and exact URLs in `raw/`; never make a reader open raw CSV to
+understand the conversation. The renderer is non-destructive and can mirror a
+legacy `01-messages/` + `03-reports/` export into the new layers.
+
+Use UTF-8 and real CSV quoting. Use collision-safe filenames and relative paths
+in CSV/manifest. Never overwrite existing binaries or edit raw inputs; rerun
+the renderer and audit after moving anything.
 
 ### 6. Validate and report
 
 Read [references/verification.md](references/verification.md) before closeout.
 Validation must come from the raw ledger/source messages, not only the
 classifier's report. Verify conversation mapping, counts, unique message IDs,
-CSV round-trip, dedupe/media partitions, path containment, hashes, and pin
-coverage. Keep the source-write flag false.
+CSV round-trip, dedupe/media partitions, readable/raw reconciliation,
+path containment, hashes, and pin coverage. Keep the source-write flag false.
 
 Use these statuses:
 
