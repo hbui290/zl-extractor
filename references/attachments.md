@@ -22,6 +22,13 @@ paths that escape verified Zalo media roots. Do not scan arbitrary paths, mutate
 URLs, brute-force media paths, or use an unauthenticated Node request as the
 final source.
 
+Build the media queue once before fetching. Deduplicate by stable media ID or
+verified local path first, then use a URL fingerprint only as a fallback; keep
+all exact message references. Use bounded concurrency (default 4, or 1 when the
+renderer serializes requests), a 30-second per-item deadline, and at most one
+retry for 429/5xx/network errors. Do not retry 404. Checkpoint each verified
+item so a rerun resumes instead of downloading the same files again.
+
 ## Output and validation
 
 Write files under:
@@ -52,7 +59,9 @@ relative_output_path, size, sha256, source_kind, status, error
 ```
 
 Do not print or persist raw signed URLs unless the user explicitly requests
-them; a redacted host/status or URL fingerprint is sufficient for audit.
+them; a redacted host/status or URL fingerprint is sufficient for audit. Keep
+opaque runtime attachment objects temporary and normalize only the fields in the
+schema above.
 
 ## Statuses
 

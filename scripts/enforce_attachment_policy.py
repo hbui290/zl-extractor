@@ -5,7 +5,7 @@ import argparse
 import csv
 from pathlib import Path
 
-from export_paths import export_paths
+from export_paths import assert_source_read_only, export_paths
 
 
 def is_excluded(row):
@@ -19,6 +19,7 @@ def main():
     parser.add_argument("export_root", type=Path)
     args = parser.parse_args()
     paths = export_paths(args.export_root)
+    assert_source_read_only(args.export_root, paths["metadata"])
     path = paths["machine"] / "attachments.csv"
     if not path.exists():
         print(f"policy_rows=0 status=SKIPPED output={path}")

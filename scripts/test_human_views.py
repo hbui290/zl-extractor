@@ -11,7 +11,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from render_human_views import build  # noqa: E402
+from export_paths import assert_source_read_only, contained_attachment, safe_category_slug  # noqa: E402
+from render_human_views import build, render_media  # noqa: E402
 
 
 def write_csv(path, fields, rows):
@@ -81,7 +82,23 @@ def main():
         assert (root / "source/manifest.json").exists()
         assert (root / "readable/index.md").exists()
         assert (root / "readable/messages.md").exists()
+        assert (root / "readable/links.csv").exists()
+        assert (root / "readable/media.csv").exists()
+        assert (root / "readable/review.csv").exists()
         assert (root / "readable/links-by-category/tool-platform.md").exists()
+        assert (root / "readable/links-by-category/tool-platform.csv").exists()
+        with (root / "readable/links.csv").open(newline="", encoding="utf-8") as handle:
+            assert next(csv.reader(handle)) == [
+                "sequence", "category", "context_name", "url", "occurrence_count",
+            ]
+        with (root / "readable/media.csv").open(newline="", encoding="utf-8") as handle:
+            assert next(csv.reader(handle)) == [
+                "sequence", "type", "original_name", "relative_output_path", "status",
+            ]
+        with (root / "readable/review.csv").open(newline="", encoding="utf-8") as handle:
+            assert next(csv.reader(handle)) == [
+                "sequence", "url", "category", "confidence", "context_name", "review_reasons",
+            ]
         messages = (root / "readable/messages.md").read_text(encoding="utf-8")
         assert messages.index("First") < messages.index("Second")
         category_dir = root / "raw/links-by-category"
@@ -97,6 +114,22 @@ def main():
         before = digest_tree(root)
         build(root)
         assert before == digest_tree(root)
+        assert safe_category_slug("../../escape") == "other"
+        (root / "attachments").mkdir()
+        (root / "attachments/ok.txt").write_text("ok", encoding="utf-8")
+        assert contained_attachment(root, "attachments/ok.txt") == (root / "attachments/ok.txt").resolve()
+        assert contained_attachment(root, "../escape.txt") is None
+        media = render_media([{
+            "original_name": "secret.txt", "relative_output_path": "../escape.txt", "status": "copied",
+        }], root)
+        assert "[secret.txt]" not in media
+        (root / "source/manifest.json").write_text(json.dumps({"sourceWriteIssued": True}), encoding="utf-8")
+        try:
+            assert_source_read_only(root, root / "source")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("source write guard did not reject sourceWriteIssued=true")
     print("human_view_tests=PASS")
 
 

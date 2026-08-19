@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from export_paths import assert_source_read_only, contained_attachment, safe_category_slug
+
 
 CATEGORY_LABELS = {
     "shopee-affiliate": "Shopee / affiliate",
@@ -50,6 +52,21 @@ def read_csv(path):
         return []
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def write_table_csv(path, rows, preferred_fields):
+    """Write a curated table; raw CSVs retain the full provenance columns."""
+    rows = list(rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(preferred_fields),
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def read_json(path):
@@ -133,13 +150,21 @@ def mirror_inputs(root):
     for name, legacy_name in RAW_MIRRORS.items():
         destination = raw_dir / name
         legacy = root / legacy_name
-        if not destination.exists() and legacy.exists():
+        if not destination.exists() and legacy.is_file() and not legacy.is_symlink():
+            try:
+                legacy.resolve().relative_to(root)
+            except ValueError:
+                continue
             shutil.copy2(legacy, destination)
             mirrored.append(str(destination.relative_to(root)))
     for name, legacy_name in SOURCE_MIRRORS.items():
         destination = source_dir / name
         legacy = root / legacy_name
-        if not destination.exists() and legacy.exists():
+        if not destination.exists() and legacy.is_file() and not legacy.is_symlink():
+            try:
+                legacy.resolve().relative_to(root)
+            except ValueError:
+                continue
             shutil.copy2(legacy, destination)
             mirrored.append(str(destination.relative_to(root)))
     info_path = source_dir / "source-info.json"
@@ -236,7 +261,7 @@ def render_messages(rows, title, manifest):
 
 def link_card(row):
     url = pick(row, "url", "canonical_url")
-    category = pick(row, "category") or "other"
+    category = safe_category_slug(pick(row, "category"))
     confidence = pick(row, "confidence") or "unknown"
     count = pick(row, "occurrence_count") or "1"
     first_seen = format_time(pick(row, "first_seen", "timestamp"))
@@ -283,14 +308,16 @@ def render_media(rows, root):
     for row in sorted(rows, key=sort_key):
         relative = pick(row, "relative_output_path", "output_path")
         file_label = pick(row, "original_name", "filename", "type") or "(unnamed)"
-        if relative and (root / relative).exists():
+        status = pick(row, "status") or "unknown"
+        saved_status = status in {"copied", "downloaded", "preview_only"}
+        if saved_status and contained_attachment(root, relative):
             file_label = f"[{file_label}](../{relative})"
         lines.append("| " + " | ".join([
             markdown_table(format_time(pick(row, "timestamp", "sent_at_local"))),
             markdown_table(pick(row, "sender", "sender_name") or "Unknown"),
             markdown_table(pick(row, "type", "message_type") or "file"),
             markdown_table(file_label),
-            markdown_table(pick(row, "status") or "unknown"),
+            markdown_table(status),
         ]) + " |")
     return "\n".join(lines + [""])
 
@@ -324,12 +351,15 @@ def render_index(root, title, messages, links, occurrences, attachments, review,
         "",
         "- [Conversation](messages.md)",
         "- [Links](links.md)",
+        "- [Link table](links.csv)",
         "- [Attachments](media.md)",
+        "- [Attachment table](media.csv)",
         "- [Review queue](review.md)",
+        "- [Review table](review.csv)",
         "",
         "## Storage layers",
         "",
-        "- `readable/` — cleaned Markdown views for people.",
+        "- `readable/` — Markdown views for people plus curated CSV tables for filtering.",
         "- `raw/` — machine-readable copies used for audit; do not edit.",
         "- `source/` — manifest and provenance for this extraction.",
         "",
@@ -343,6 +373,8 @@ def render_index(root, title, messages, links, occurrences, attachments, review,
 
 def build(root):
     root = root.resolve()
+    metadata = root / "source" if (root / "source" / "manifest.json").exists() else root / "03-reports"
+    assert_source_read_only(root, metadata)
     mirrored = mirror_inputs(root)
     readable = root / "readable"
     category_dir = readable / "links-by-category"
@@ -367,15 +399,45 @@ def build(root):
     (readable / "links.md").write_text(render_links(links), encoding="utf-8")
     (readable / "media.md").write_text(render_media(attachments, root), encoding="utf-8")
     (readable / "review.md").write_text(render_review(review), encoding="utf-8")
+    write_table_csv(
+        readable / "links.csv",
+        links,
+        [
+            "sequence", "category", "context_name", "url", "occurrence_count",
+        ],
+    )
+    write_table_csv(
+        readable / "media.csv",
+        attachments,
+        [
+            "sequence", "type", "original_name", "relative_output_path", "status",
+        ],
+    )
+    write_table_csv(
+        readable / "review.csv",
+        review,
+        [
+            "sequence", "url", "category", "confidence", "context_name", "review_reasons",
+        ],
+    )
     for path in category_dir.glob("*.md"):
+        path.unlink()
+    for path in category_dir.glob("*.csv"):
         path.unlink()
     grouped = defaultdict(list)
     for row in links:
-        grouped[pick(row, "category") or "other"].append(row)
+        grouped[safe_category_slug(pick(row, "category"))].append(row)
     for category, rows in sorted(grouped.items()):
         (category_dir / f"{category}.md").write_text(
             render_links(rows, CATEGORY_LABELS.get(category, category.replace("-", " ").title())),
             encoding="utf-8",
+        )
+        write_table_csv(
+            category_dir / f"{category}.csv",
+            rows,
+            [
+                "sequence", "category", "context_name", "url", "occurrence_count",
+            ],
         )
     return {
         "title": title,

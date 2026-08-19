@@ -11,7 +11,8 @@ search, review, and reuse.
 Zalo chats are full of ideas, resources, campaigns, and files that are hard to
 find later. ZL Extractor turns that noise into a practical archive:
 
-- Keep the full conversation in readable TXT and CSV files.
+- Keep the full conversation in readable Markdown, with CSV tables for links,
+  attachments, and review work.
 - Open a human-first Markdown view grouped by day and sender.
 - Find and organize links shared in messages and pinned content.
 - Merge repeated shares into a clear link list while keeping the context.
@@ -44,7 +45,7 @@ and temporary connection automatically.
 
 ```text
 group-export/
-├── readable/          the folder people open first
+├── readable/          Markdown reading views + curated CSV tables
 ├── attachments/       images/files when requested
 ├── raw/               exact CSV/JSON for audit and reprocessing
 └── source/            manifest and extraction provenance

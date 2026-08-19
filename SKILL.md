@@ -38,6 +38,38 @@ On macOS, verify `USER_HOME/Library/Application Support/ZaloData` and its
 do not apply the macOS path literally. Search for an official export separately
 under the verified media/account paths (`.zdb` or `backup_zalo_*.zl.zip`).
 
+## Speed and resumability guardrails
+
+The post-process scripts are fast; the expensive phases are authenticated
+runtime reads and media retrieval. Keep one runtime session and one normalized
+message snapshot per run. Do not write a new inline extractor for each group.
+If the runtime adapter/recipe is unavailable, stop with `BLOCKED` and report the
+missing adapter instead of starting an unbounded ad-hoc scrape.
+
+Record a small phase ledger in `source/` with `started_at`, `finished_at`,
+duration, item count, bytes, retries, and status for `resolve`, `messages`,
+`pins`, `media`, and `post_process`. Use these defaults unless the current
+renderer proves a safer limit:
+
+```text
+MESSAGE_BATCH_SIZE = 9000
+MAX_MESSAGE_PAGES  = 100
+MEDIA_CONCURRENCY  = 4   # use 1 when the renderer serializes requests
+MEDIA_TIMEOUT      = 30s per item
+MEDIA_ATTEMPTS     = 2   # initial attempt + one retry for 429/5xx/network only
+```
+
+Checkpoint after each message page and each verified media item. Resume from
+the checkpoint and SHA-256-verified artifacts; do not re-download them. Build a
+unique media work queue before fetching. Associate a binary only by an exact
+message/media reference or verified local path—never by nearest timestamp or
+sender heuristic. A failed association is `PARTIAL`/review, not a guessed link.
+
+Never persist an opaque runtime snapshot or signed CDN query in the final raw
+layer. Keep such data temporary, or store only normalized fields, host/status,
+and a fingerprint. This preserves auditability without turning the export into
+a reusable credential cache.
+
 ## Workflow
 
 ### 1. Resolve the conversation
@@ -81,13 +113,16 @@ When links are in scope, read [references/links-and-pins.md](references/links-an
 before extraction. It defines the exact pin audit, URL dedupe boundary,
 context merge, classification rules, review queue, and link output schema.
 
-Run the bundled checks after producing the link files:
+Run the bundled checks in this order after the runtime snapshot exists:
 
 ```bash
-python3 scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
-python3 scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
-python3 scripts/test_link_rules.py
-python3 scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/test_link_rules.py
+python3 -B scripts/test_human_views.py
+python3 -B scripts/apply_category_rules.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>  # only when media is in scope
+python3 -B scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
 `write_link_review.py` writes review files. `audit_links.py` is read-only and
@@ -107,7 +142,7 @@ resolved absolute path, with the readable layer first:
 
 ```text
 <OUTPUT_ROOT>/<slug>-export-<timestamp>/
-  readable/          index, chronological messages, links, categories, media, review
+  readable/          Markdown reading views + curated CSV tables
   attachments/       only requested and verified binaries
   raw/               exact CSV/JSON inputs for audit/reprocessing
   source/            manifest, classification report, provenance
@@ -121,14 +156,20 @@ python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 
 `readable/messages.md` is chronological and grouped by local date. `links.md`
 and `links-by-category/` show context, category, confidence, occurrences, and
-clickable labels. `media.md` and `review.md` are compact tables/queues. Keep
-the original text and exact URLs in `raw/`; never make a reader open raw CSV to
-understand the conversation. The renderer is non-destructive and can mirror a
-legacy `01-messages/` + `03-reports/` export into the new layers.
+clickable labels. `readable/links.csv` and the category CSVs are intentionally
+narrow, five-column, one-row-per-canonical-URL reading tables: category,
+context, URL, and occurrence count. `media.csv` has five columns and
+`review.csv` has six; both use the same compact-reader principle. Keep confidence, IDs,
+classification evidence, hashes, and other provenance in `raw/` or the Markdown
+review view; never make a reader open raw CSV to understand the conversation. Do
+not create XLSX unless formulas, pivots, or a styled workbook are explicitly
+requested. The renderer is non-destructive and can mirror a legacy `01-messages/` +
+`03-reports/` export into the new layers.
 
 Use UTF-8 and real CSV quoting. Use collision-safe filenames and relative paths
-in CSV/manifest. Never overwrite existing binaries or edit raw inputs; rerun
-the renderer and audit after moving anything.
+in CSV/manifest. Never overwrite existing binaries or edit immutable source
+inputs; derived ledgers may be regenerated only after the source-write guard is
+checked. Rerun the renderer and audit after moving anything.
 
 ### 6. Validate and report
 
@@ -165,6 +206,7 @@ Source and encryption state:
 Counted / exported:
 Text / attachment scope:
 Link scope / pin audit:
+Phase timings / retries:
 Output folder:
 Validation: COMPLETE | PARTIAL | BLOCKED + reason
 Source changed: no | unknown

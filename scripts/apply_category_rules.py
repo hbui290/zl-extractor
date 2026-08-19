@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from export_paths import export_paths
+from export_paths import assert_source_read_only, export_paths, safe_category_slug
 
 
 FIELDS = [
@@ -24,8 +24,13 @@ def read_csv(path):
 
 
 def write_csv(path, rows):
+    fields = list(FIELDS)
+    for row in rows:
+        for field in row:
+            if field not in fields:
+                fields.append(field)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS, extrasaction="ignore", lineterminator="\n")
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -116,10 +121,11 @@ def main():
     args = parser.parse_args()
     root = args.export_root.resolve()
     paths = export_paths(root)
+    assert_source_read_only(root, paths["metadata"])
     messages = paths["machine"]
     reports = paths["metadata"]
 
-    raw_classified_path = reports / "links-classified-occurrences.csv"
+    raw_classified_path = messages / "links-classified-occurrences.csv"
     raw_classified = [update_row(row) for row in read_csv(raw_classified_path)]
     write_csv(raw_classified_path, raw_classified)
 
@@ -129,9 +135,11 @@ def main():
     raw_media = {url: rows for url, rows in raw_groups.items() if is_media_host(parsed(url)[0])}
 
     primary = [update_row(row) for row in read_csv(messages / "links.csv")]
-    media_path = reports / "zalo-media-links.csv"
+    media_path = messages / "zalo-media-links.csv"
     media = [update_row(row) for row in read_csv(media_path)] if media_path.exists() else []
     all_rows = primary + media
+    for row in all_rows:
+        row["category"] = safe_category_slug(row.get("category"))
     primary = sorted([row for row in all_rows if row["category"] != "zalo-media"], key=sort_key)
     media = sorted([row for row in all_rows if row["category"] == "zalo-media"], key=sort_key)
     for index, row in enumerate(primary, 1):
@@ -146,8 +154,8 @@ def main():
     category_dir.mkdir(parents=True, exist_ok=True)
     for old in category_dir.glob("*.csv"):
         old.unlink()
-    for category in sorted({row["category"] for row in primary}):
-        write_csv(category_dir / f"{category}.csv", [row for row in primary if row["category"] == category])
+    for category in sorted({safe_category_slug(row["category"]) for row in primary}):
+        write_csv(category_dir / f"{category}.csv", [row for row in primary if safe_category_slug(row["category"]) == category])
 
     report_path = reports / "link-classification.json"
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}

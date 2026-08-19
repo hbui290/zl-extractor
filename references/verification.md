@@ -34,12 +34,19 @@ JSON to make counts agree.
 Run from the skill directory:
 
 ```bash
-python3 scripts/test_link_rules.py
-python3 scripts/test_human_views.py
-python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
-python3 scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
-python3 scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/test_link_rules.py
+python3 -B scripts/test_human_views.py
+python3 -B scripts/apply_category_rules.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
+
+Run the attachment policy command only when media is in scope. `audit_links.py`
+checks the link ledger plus canonical URL, source-write guard, and basic saved
+attachment path/size safety; it is not a substitute for the runtime verifier's
+message cursor, pin-panel, MIME/magic-byte, or SHA-256 acquisition checks.
 
 The audit exit codes are:
 

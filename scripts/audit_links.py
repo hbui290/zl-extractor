@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from export_paths import export_paths
+from export_paths import contained_attachment, export_paths
 
 
 def read_csv(path):
@@ -54,6 +54,12 @@ def main():
     classification_report_path = reports / "link-classification.json"
 
     failures = []
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = {}
+    if manifest.get("sourceWriteIssued") is True:
+        failures.append("manifest says sourceWriteIssued=true")
     if not raw_path.exists():
         failures.append(f"missing raw occurrence ledger: {raw_path}")
         raw = []
@@ -61,7 +67,6 @@ def main():
         raw = read_csv(raw_path)
     primary = read_csv(primary_path) if primary_path.exists() else []
     media = read_csv(media_path) if media_path.exists() else []
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
 
     raw_groups = {}
     for row in raw:
@@ -70,6 +75,8 @@ def main():
     raw_media = {url: rows for url, rows in raw_groups.items() if is_internal_media(url)}
     primary_urls = [exact_url(row) for row in primary]
     media_urls = [exact_url(row) for row in media]
+    if any(not row.get("canonical_url") or row.get("canonical_url") != exact_url(row) for row in primary + media):
+        failures.append("canonical_url is missing or differs from trim(url) in canonical links")
     resolution_path = messages / "link-review-resolutions.csv"
     resolutions = {}
     if resolution_path.exists():
@@ -114,6 +121,20 @@ def main():
         failures.append("combined occurrence sum does not equal raw occurrence rows")
     if any(not row.get("message_ids") and not row.get("pin_ids") for row in primary):
         failures.append("primary row is missing message_ids and pin_ids")
+    attachments_path = messages / "attachments.csv"
+    attachment_rows = read_csv(attachments_path) if attachments_path.exists() else []
+    saved_statuses = {"copied", "downloaded", "preview_only"}
+    for row in attachment_rows:
+        status = (row.get("status") or "").strip()
+        relative = (row.get("relative_output_path") or row.get("output_path") or "").strip()
+        if status == "skipped_by_policy" and relative:
+            failures.append("policy-skipped attachment still exposes an output path")
+        elif status in saved_statuses:
+            candidate = contained_attachment(root, relative)
+            if candidate is None:
+                failures.append(f"saved attachment path is missing or outside export: {relative}")
+            elif candidate.stat().st_size <= 0:
+                failures.append(f"saved attachment is empty: {relative}")
     review_path = messages / "link-review.csv"
     review_file_rows = read_csv(review_path) if review_path.exists() else []
     if review_rows and not review_path.exists():

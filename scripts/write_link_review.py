@@ -6,7 +6,7 @@ import csv
 import json
 from pathlib import Path
 
-from export_paths import export_paths
+from export_paths import assert_source_read_only, export_paths
 
 
 def read_csv(path):
@@ -20,6 +20,7 @@ def main():
     args = parser.parse_args()
     root = args.export_root.resolve()
     paths = export_paths(root)
+    assert_source_read_only(root, paths["metadata"])
     machine = paths["machine"]
     metadata = paths["metadata"]
     source = machine / "links-classified.csv"

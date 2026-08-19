@@ -26,10 +26,14 @@ meaning or invent context.
 │   ├── index.md
 │   ├── messages.md
 │   ├── links.md
+│   ├── links.csv
 │   ├── links-by-category/
-│   │   └── <category>.md
+│   │   ├── <category>.md
+│   │   └── <category>.csv
 │   ├── media.md
-│   └── review.md
+│   ├── media.csv
+│   ├── review.md
+│   └── review.csv
 ├── attachments/
 │   ├── images/
 │   ├── videos/
@@ -97,13 +101,23 @@ Short evidence-backed context
 ```
 
 Use `links-by-category/<category>.md` as filtered views, not a second source of
-truth. Keep long URLs behind a descriptive link label, while retaining the
-exact URL in `raw/links.csv`.
+truth. Keep long public URLs behind a descriptive link label, while retaining
+the exact URL in `raw/links.csv`. Internal Zalo CDN URLs and signed query
+strings are not reader-facing data: keep only normalized host/status or a
+fingerprint unless the user explicitly asks for the raw token-bearing value.
+
+`readable/links.csv` and `readable/links-by-category/<category>.csv` are
+intentionally narrow five-column reading tables: `sequence`, `category`,
+`context_name`, `url`, and `occurrence_count`. They are the default choice for
+quick sorting/filtering in Excel, Numbers, or Google Sheets. Full context,
+timestamps, confidence, source IDs, classification evidence, and canonicalization
+details remain in Markdown/raw for audit. Do not create XLSX by default; add it
+only when the user needs formulas, pivots, or a styled workbook.
 
 ## Media and review presentation
 
-- `readable/media.md` is a compact table: time, sender, type, filename, output path, and status.
-- `readable/review.md` contains only unresolved classifications and the reason each needs attention.
+- `readable/media.md` is the compact human table; `readable/media.csv` is a five-column sortable attachment table.
+- `readable/review.md` contains only unresolved classifications; `readable/review.csv` is a six-column filterable review queue.
 - `readable/index.md` is the landing page: status, counts, date range when known, and links to every view.
 - Keep warnings visible on the index; do not bury `PARTIAL` or missing Pin coverage in raw JSON.
 
