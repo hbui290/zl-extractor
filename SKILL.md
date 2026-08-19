@@ -38,7 +38,7 @@ On macOS, verify `USER_HOME/Library/Application Support/ZaloData` and its
 do not apply the macOS path literally. Search for an official export separately
 under the verified media/account paths (`.zdb` or `backup_zalo_*.zl.zip`).
 
-## Speed and resumability guardrails
+## Speed, phase ledger, and resumability guardrails
 
 The post-process scripts are fast; the expensive phases are authenticated
 runtime reads and media retrieval. Keep one runtime session and one normalized
@@ -46,10 +46,23 @@ message snapshot per run. Do not write a new inline extractor for each group.
 If the runtime adapter/recipe is unavailable, stop with `BLOCKED` and report the
 missing adapter instead of starting an unbounded ad-hoc scrape.
 
-Record a small phase ledger in `source/` with `started_at`, `finished_at`,
-duration, item count, bytes, retries, and status for `resolve`, `messages`,
-`pins`, `media`, and `post_process`. Use these defaults unless the current
-renderer proves a safer limit:
+Create `source/phase-ledger.json` before the first runtime call. Every phase
+must have `started_at`, `finished_at`, `duration_ms`, `items`, `bytes`,
+`retries`, and `status`; write it after each phase and in the final report.
+Use this fixed critical path:
+
+```text
+resolve -> preflight -> messages -> pins -> media_prepare -> media_fetch -> post_process
+```
+
+Preflight once, before the full snapshot: verify the Zalo page, read-only
+adapter, exact conversation, pin adapter/end-marker, output root, and media
+field shape. Do not inspect the app bundle, invent a new inline extractor, or
+rerun exploratory pin calls after the full snapshot has started. If preflight
+fails, stop `BLOCKED` instead of spending time on a doomed run.
+
+Use these defaults unless a measured 20-item media dry-run proves the renderer
+requires a safer limit:
 
 ```text
 MESSAGE_BATCH_SIZE = 9000
@@ -57,13 +70,17 @@ MAX_MESSAGE_PAGES  = 100
 MEDIA_CONCURRENCY  = 4   # use 1 when the renderer serializes requests
 MEDIA_TIMEOUT      = 30s per item
 MEDIA_ATTEMPTS     = 2   # initial attempt + one retry for 429/5xx/network only
+MEDIA_DRY_RUN      = 20 eligible items
+MEDIA_PROGRESS     = every 25 items or 10 seconds, whichever comes later
 ```
 
-Checkpoint after each message page and each verified media item. Resume from
-the checkpoint and SHA-256-verified artifacts; do not re-download them. Build a
-unique media work queue before fetching. Associate a binary only by an exact
-message/media reference or verified local path—never by nearest timestamp or
-sender heuristic. A failed association is `PARTIAL`/review, not a guessed link.
+Checkpoint after each message page and each media item in an atomic ledger.
+Resume from a checkpoint plus a SHA-256-verified artifact; never restart a
+completed media item or re-download it. Build the unique media work queue
+before fetching, and remove policy-skipped/not-found items before opening a
+network request. Associate a binary only by an exact message/media reference
+or verified local path—never by nearest timestamp or sender heuristic. A failed
+association is `PARTIAL`/review, not a guessed link.
 
 Never persist an opaque runtime snapshot or signed CDN query in the final raw
 layer. Keep such data temporary, or store only normalized fields, host/status,
@@ -74,7 +91,7 @@ a reusable credential cache.
 
 ### 1. Resolve the conversation
 
-1. Discover the active account under `DB_ROOT` and correlate it with the logged-in Zalo renderer.
+1. Create the output root and phase ledger, then discover the active account under `DB_ROOT` and correlate it with the logged-in Zalo renderer.
 2. Use Zalo's group/conversation list (the tested build exposes `Gm1y`) to map the exact display name to its ID and metadata. Do not identify a group from a DB filename.
 3. Require an independent check: opened conversation, preview text, recent sender/time, member count, or conversation-key membership. Stop if the name is ambiguous.
 4. A `file is not a database` error means encrypted/app-managed state may be present; it does not prove that messages are missing.
@@ -106,6 +123,8 @@ Guard against a repeated cursor and cap pages. Normalize only the fields needed
 for output (`conversation_id`, message ID, timestamps, sender, type, text,
 quote/reference, and attachment metadata), then sort oldest-to-newest by
 `sendDttm`, `msgId`. Message-text links are incomplete until the pin audit runs.
+Use one runtime call per page, not one CDP evaluation per message. Persist the
+normalized page before requesting the next page.
 
 ### 3. Process links and pinned content
 
@@ -113,11 +132,17 @@ When links are in scope, read [references/links-and-pins.md](references/links-an
 before extraction. It defines the exact pin audit, URL dedupe boundary,
 context merge, classification rules, review queue, and link output schema.
 
-Run the bundled checks in this order after the runtime snapshot exists:
+Run these static smoke tests once after changing the skill or renderer:
 
 ```bash
 python3 -B scripts/test_link_rules.py
 python3 -B scripts/test_human_views.py
+```
+
+For each export, run only the data-dependent pipeline after the runtime
+snapshot exists:
+
+```bash
 python3 -B scripts/apply_category_rules.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 -B scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 -B scripts/enforce_attachment_policy.py <OUTPUT_ROOT>/<slug>-export-<timestamp>  # only when media is in scope
@@ -178,6 +203,9 @@ Validation must come from the raw ledger/source messages, not only the
 classifier's report. Verify conversation mapping, counts, unique message IDs,
 CSV round-trip, dedupe/media partitions, readable/raw reconciliation,
 path containment, hashes, and pin coverage. Keep the source-write flag false.
+Also require a complete phase ledger. If timings or retries are missing, report
+`PARTIAL` with `phase_ledger=missing` rather than claiming the workflow was
+fast or complete.
 
 Use these statuses:
 

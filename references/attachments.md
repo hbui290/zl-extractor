@@ -22,12 +22,17 @@ paths that escape verified Zalo media roots. Do not scan arbitrary paths, mutate
 URLs, brute-force media paths, or use an unauthenticated Node request as the
 final source.
 
-Build the media queue once before fetching. Deduplicate by stable media ID or
-verified local path first, then use a URL fingerprint only as a fallback; keep
-all exact message references. Use bounded concurrency (default 4, or 1 when the
-renderer serializes requests), a 30-second per-item deadline, and at most one
-retry for 429/5xx/network errors. Do not retry 404. Checkpoint each verified
-item so a rerun resumes instead of downloading the same files again.
+Build the media queue once before fetching. First remove GIF/sticker,
+not-found, and already hash-verified items; only eligible items enter the
+network queue. Deduplicate by stable media ID or verified local path first, then
+use a URL fingerprint only as a fallback; keep all exact message references.
+
+Run a 20-item dry-run and record elapsed time, success/failure counts, and
+retries. Start with a bounded worker pool of 4; reduce to 1 when the renderer
+serializes requests or the dry-run shows throttling. Never use unbounded
+`Promise.all`. Apply a 30-second per-item deadline and at most one retry for
+429/5xx/network errors. Do not retry 404. Checkpoint every completed item
+atomically so interruption resumes instead of downloading from zero.
 
 ## Output and validation
 

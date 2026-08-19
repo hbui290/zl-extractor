@@ -14,6 +14,8 @@ may not be in the normal message stream.
 - Add links from messages with `source=message` and pins with `source=pin`; retain `message_id`/`pin_id` when available.
 - Record `pinAuditStatus`, `pinAuditCompleteness`, enumerated pin count, unique pin-link count, and the pagination/end condition.
 - Mark complete only when the exact panel reaches its end or matches an explicit total. Otherwise use `unknown`/`blocked` and keep the export `PARTIAL`.
+- Run the pin preflight immediately after conversation resolution, before media retrieval. A page cap, thrown request, unchanged cache, or missing `noMore`/explicit-total signal is not complete; do not turn it into `NO_MORE` by guesswork.
+- Use one bounded pagination loop with a repeated-page guard. If the end marker is not observed, stop with `pinAuditCompleteness=unknown`/`PARTIAL` instead of probing the same panel dozens of times.
 
 ## Occurrence ledger and exact dedupe
 

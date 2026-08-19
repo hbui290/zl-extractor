@@ -23,6 +23,7 @@ Verify all applicable invariants:
 - CSV files round-trip with Unicode, commas, quotes, and embedded newlines intact.
 - Output paths stay inside the export; copied/downloaded binaries are non-empty and hash-match.
 - `sourceWriteIssued: false` and source DB metadata are recorded.
+- `source/phase-ledger.json` exists, every phase is closed, and each phase has duration, item count, bytes, retries, and status.
 - `readable/` contains the index, chronological message view, link views, media view, and review view.
 - Human views reconcile to raw counts; they may reformat text but must not invent or drop in-scope records.
 
@@ -60,6 +61,11 @@ The audit exit codes are:
 pin completeness is unknown, unresolved review rows remain, or requested
 non-GIF/sticker media is missing. A deterministic rule does not bypass review
 until it is independently resolved in the resolution ledger.
+
+When diagnosing a slow run, report phase timings from the ledger rather than a
+single wall-clock number. The runtime snapshot, pin audit, media queue, and
+post-processing must be distinguishable; a missing ledger is itself a workflow
+defect.
 
 ## Idempotence and stress checks
 
