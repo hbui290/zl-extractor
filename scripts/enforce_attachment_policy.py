@@ -30,10 +30,20 @@ def main():
         rows = list(reader)
     changed = 0
     for row in rows:
-        if is_excluded(row) and row.get("status") != "skipped_by_policy":
-            row["status"] = "skipped_by_policy"
-            row["error"] = "GIF/sticker binary excluded by policy"
-            changed += 1
+        if is_excluded(row):
+            row_changed = False
+            if "status" in row and row.get("status") != "skipped_by_policy":
+                row["status"] = "skipped_by_policy"
+                row_changed = True
+            for field in ("relative_output_path", "output_path"):
+                if field in row and row[field]:
+                    row[field] = ""
+                    row_changed = True
+            if "error" in row and row.get("error") != "GIF/sticker binary excluded by policy":
+                row["error"] = "GIF/sticker binary excluded by policy"
+                row_changed = True
+            if row_changed:
+                changed += 1
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()

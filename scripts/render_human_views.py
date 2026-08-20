@@ -8,6 +8,7 @@ The renderer is non-destructive: it mirrors legacy machine-readable files into
 
 import argparse
 import csv
+import html
 import json
 import re
 import shutil
@@ -16,7 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from export_paths import assert_source_read_only, contained_attachment, safe_category_slug
+from export_paths import (
+    assert_source_read_only,
+    contained_attachment,
+    has_signed_internal_media_query,
+    is_internal_media_url,
+    redact_internal_media_url,
+    safe_category_slug,
+)
 
 
 CATEGORY_LABELS = {
@@ -66,7 +74,13 @@ def write_table_csv(path, rows, preferred_fields):
             lineterminator="\n",
         )
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {
+                field: safe_csv_value(row.get(field, ""))
+                for field in preferred_fields
+            }
+            for row in rows
+        )
 
 
 def read_json(path):
@@ -103,6 +117,20 @@ def split_values(value):
 def clean_heading(value, fallback="Untitled"):
     value = re.sub(r"\s+", " ", str(value or "")).strip()
     return value or fallback
+
+
+def markdown_literal(value):
+    """Keep untrusted conversation text from becoming Markdown or URL syntax."""
+    value = html.escape(str(value or ""), quote=False)
+    for character in ("\\", "`", "*", "_", "[", "]", "(", ")"):
+        value = value.replace(character, "\\" + character)
+    return value
+
+
+def safe_csv_value(value):
+    """Prevent spreadsheet apps from interpreting a readable cell as a formula."""
+    value = "" if value is None else str(value)
+    return "'" + value if value.startswith(("=", "+", "-", "@")) else value
 
 
 def format_time(value):
@@ -155,7 +183,7 @@ def mirror_inputs(root):
                 legacy.resolve().relative_to(root)
             except ValueError:
                 continue
-            shutil.copy2(legacy, destination)
+            copy_legacy_input(legacy, destination)
             mirrored.append(str(destination.relative_to(root)))
     for name, legacy_name in SOURCE_MIRRORS.items():
         destination = source_dir / name
@@ -186,6 +214,52 @@ def mirror_inputs(root):
     return mirrored
 
 
+def copy_legacy_input(legacy, destination):
+    """Mirror legacy data while removing signed internal media query strings."""
+    if legacy.suffix.lower() != ".csv":
+        shutil.copy2(legacy, destination)
+        return
+    with legacy.open(newline="", encoding="utf-8") as handle:
+        reader = csv.reader(handle)
+        try:
+            fields = next(reader)
+        except StopIteration:
+            shutil.copy2(legacy, destination)
+            return
+        rows = list(reader)
+        url_indexes = [
+            index for index, field in enumerate(fields)
+            if "url" in field.lower() or "link" in field.lower()
+        ]
+        if not url_indexes:
+            shutil.copy2(legacy, destination)
+            return
+        has_signed_media = any(
+            has_signed_internal_media_query(row[index])
+            for row in rows for index in url_indexes if index < len(row)
+        )
+        if not has_signed_media:
+            shutil.copy2(legacy, destination)
+            return
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", newline="", encoding="utf-8") as output:
+            writer = csv.writer(output, lineterminator="\n")
+            writer.writerow(fields)
+            for row in rows:
+                for index in url_indexes:
+                    if index < len(row):
+                        row[index] = redact_internal_media_url(row[index])
+                writer.writerow(row)
+
+
+def safe_http_url(value):
+    try:
+        parsed = urlsplit(str(value or "").strip())
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
 def manifest_value(manifest, keys):
     if not isinstance(manifest, dict):
         return ""
@@ -213,12 +287,12 @@ def url_title(row):
 
 
 def markdown_table(value):
-    return re.sub(r"[\r\n]+", " ", str(value or "")).replace("|", "\\|").strip()
+    return markdown_literal(re.sub(r"[\r\n]+", " ", str(value or ""))).replace("|", "\\|").strip()
 
 
 def markdown_quote(value):
     lines = str(value or "").splitlines() or ["_(no text)_"]
-    return "\n".join("> " + line for line in lines)
+    return "\n".join("> " + markdown_literal(line) for line in lines)
 
 
 def message_text(row):
@@ -244,17 +318,17 @@ def render_messages(rows, title, manifest):
         time = format_time(pick(row, "timestamp", "sent_at_local", "sent_at_utc", "sendDttm"))
         time = time.split(" ", 1)[1] if " " in time else time
         heading = f"{time} — {message_sender(row)}" if time else message_sender(row)
-        lines.extend([f"### {heading}", ""])
+        lines.extend([f"### {markdown_literal(heading)}", ""])
         kind = pick(row, "message_type", "type", "msgType")
         if kind and kind.lower() not in {"text", "normal", "1"}:
             lines.append(f"> _[{kind}]_")
         quote = pick(row, "quote_text", "quote", "reference_text")
         if quote:
-            lines.append(f"> ↪ {quote.replace(chr(10), ' ')}")
+            lines.append(f"> ↪ {markdown_literal(quote.replace(chr(10), ' '))}")
         lines.append(markdown_quote(message_text(row)))
         attachment = pick(row, "attachment_name", "original_name", "file_name", "filename")
         if attachment:
-            lines.append(f"> 📎 {attachment}")
+            lines.append(f"> 📎 {markdown_literal(attachment)}")
         lines.append("")
     return "\n".join(lines)
 
@@ -268,17 +342,24 @@ def link_card(row):
     last_seen = format_time(pick(row, "last_seen"))
     sources = ", ".join(split_values(pick(row, "sources", "source"))) or "message"
     context = pick(row, "context_summary")
-    lines = [f"### {url_title(row)}", f"[Open link](<{url}>)", ""]
+    if is_internal_media_url(url):
+        redacted_url = redact_internal_media_url(url)
+        link_line = f"**Zalo media URL:** redacted (signed query omitted) `{markdown_literal(redacted_url)}`"
+    elif safe_http_url(url):
+        link_line = f"[Open link](<{url}>)"
+    else:
+        link_line = "**URL:** unavailable or invalid"
+    lines = [f"### {markdown_literal(url_title(row))}", link_line, ""]
     lines.append(f"- **Category:** `{category}` · **Confidence:** `{confidence}`")
-    lines.append(f"- **Shared:** {count} time(s) · **Source:** {sources}")
+    lines.append(f"- **Shared:** {count} time(s) · **Source:** {markdown_literal(sources)}")
     if first_seen:
         seen = first_seen if not last_seen or last_seen == first_seen else f"{first_seen} → {last_seen}"
         lines.append(f"- **Seen:** {seen}")
     if context:
-        lines.append(f"- **Context:** {context}")
+        lines.append(f"- **Context:** {markdown_literal(context)}")
     alternatives = pick(row, "context_alternatives")
     if alternatives:
-        lines.append(f"- **Needs attention:** {alternatives}")
+        lines.append(f"- **Needs attention:** {markdown_literal(alternatives)}")
     lines.append("")
     return lines
 
@@ -308,15 +389,18 @@ def render_media(rows, root):
     for row in sorted(rows, key=sort_key):
         relative = pick(row, "relative_output_path", "output_path")
         file_label = pick(row, "original_name", "filename", "type") or "(unnamed)"
+        safe_file_label = markdown_literal(file_label)
         status = pick(row, "status") or "unknown"
         saved_status = status in {"copied", "downloaded", "preview_only"}
         if saved_status and contained_attachment(root, relative):
-            file_label = f"[{file_label}](../{relative})"
+            file_label = f"[{safe_file_label}](../{relative})"
+        else:
+            file_label = safe_file_label
         lines.append("| " + " | ".join([
             markdown_table(format_time(pick(row, "timestamp", "sent_at_local"))),
             markdown_table(pick(row, "sender", "sender_name") or "Unknown"),
             markdown_table(pick(row, "type", "message_type") or "file"),
-            markdown_table(file_label),
+            file_label.replace("|", "\\|"),
             markdown_table(status),
         ]) + " |")
     return "\n".join(lines + [""])
@@ -330,7 +414,7 @@ def render_review(rows):
         lines.extend(link_card(row))
         reasons = pick(row, "review_reasons")
         if reasons:
-            lines.insert(len(lines) - 1, f"- **Review reason:** {reasons}")
+            lines.insert(len(lines) - 1, f"- **Review reason:** {markdown_literal(reasons)}")
     return "\n".join(lines)
 
 

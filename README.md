@@ -18,28 +18,69 @@ find later. ZL Extractor turns that noise into a practical archive:
 - Merge repeated shares into a clear link list while keeping the context.
 - Export images and files when you need them.
 - Skip GIFs and stickers by default so the archive stays useful.
+- Reuse one message snapshot for media candidates so requested media does not
+  trigger a second full history scan.
+- Continue an existing export later using a saved message watermark and
+  idempotent delta merge.
+- Lock the requested scope before runtime work and resume completed items safely.
+- Measure each workflow phase so slow runs have a clear cause.
 - See clearly what was exported, what needs review, and what Zalo did not expose.
 
 It is useful for affiliate groups, community research, content research, and
 personal knowledge archives.
+
+## Speed and resumability
+
+The slow part is the authenticated Zalo runtime, not local formatting. The
+workflow records each phase in `source/phase-ledger.json`, reuses one message
+snapshot for links and media candidates, and resumes later runs from saved
+watermarks/checkpoints.
+
+As a local smoke benchmark, link extraction, categorization, review-file
+generation, readable rendering, and auditing took a median **0.457 seconds**
+over 3 runs on a 5,058-message / 12-pin snapshot. This does not measure live
+Zalo paging, network downloads, or OCR; those remain dependent on the current
+Zalo session and requested media scope.
 
 ## Quick start
 
 Copy the skill into your Codex skills directory:
 
 ```bash
-cp -R zl-extractor ~/.codex/skills/zl-extractor
+cp -R ./zl-extractor ~/.codex/skills/zl-extractor
 ```
 
 Then ask Codex:
 
 ```text
 Use $zl-extractor to export the Zalo group "AFF Siêu Dễ - 30 Ngày Ăn Ngủ Cùng AFF".
-Include messages, links, pinned content, and requested media from 2026-07-16 onward.
+Include messages, links, and pinned content from 2026-07-16 onward. Include media only if I explicitly request it.
 ```
 
 The skill discovers the current machine's Zalo paths, account, conversation,
 and temporary connection automatically.
+
+## Use it with other coding agents
+
+Copy this folder as-is; keep `SKILL.md`, `references/`, `scripts/`, and
+`runtime/` together when live Zalo extraction or media retrieval is in scope.
+Choose user scope for a personal install or project scope for a team/project
+install.
+
+| Agent | Common skill folder | Invoke |
+|---|---|---|
+| Codex | `~/.codex/skills/zl-extractor` or `.agents/skills/zl-extractor` | `$zl-extractor` |
+| Claude Code | `~/.claude/skills/zl-extractor` | `/zl-extractor` |
+| DeepCode | `.deepcode/skills/zl-extractor` or `~/.agents/skills/zl-extractor` | skill name in the agent |
+| Kimi Code | `.kimi-code/skills/zl-extractor` or `.agents/skills/zl-extractor` | `/zl-extractor` |
+| ZCode | import this skill folder | imported skill name |
+
+Host-specific discovery and import rules can change; use the official guides:
+[Codex](https://developers.openai.com/codex/skills),
+[Claude Code](https://code.claude.com/docs/en/skills),
+[DeepCode](https://api-docs.deepseek.com/quick_start/agent_integrations/deepcode),
+[Kimi Code](https://moonshotai.github.io/kimi-code/en/customization/skills),
+[ZCode](https://zcode.z.ai/en/docs/skill).
 
 ## What you receive
 
@@ -47,8 +88,8 @@ and temporary connection automatically.
 group-export/
 ├── readable/          Markdown reading views + curated CSV tables
 ├── attachments/       images/files when requested
-├── raw/               exact CSV/JSON for audit and reprocessing
-└── source/            manifest and extraction provenance
+├── raw/               machine-readable CSV/JSON for audit; signed media redacted
+└── source/            manifest, run plan, checkpoints, provenance, and timings
 ```
 
 The result is designed to be portable: open `readable/index.md`, search the
@@ -79,3 +120,11 @@ The README stays intentionally simple. The detailed workflow lives here:
 - [links-and-pins.md](references/links-and-pins.md) — pinned content, dedupe, and link context
 - [attachments.md](references/attachments.md) — media retrieval and GIF/sticker policy
 - [verification.md](references/verification.md) — audits, statuses, and closeout checks
+- [scripts/phase_ledger.py](scripts/phase_ledger.py) — phase timing ledger and validator
+- [scripts/run_plan.py](scripts/run_plan.py) — scope lock and phase policy
+- [scripts/item_checkpoint.py](scripts/item_checkpoint.py) — item-level resume ledger
+- [scripts/incremental_state.py](scripts/incremental_state.py) — later-run watermark and delta merge
+- [scripts/extract_links.py](scripts/extract_links.py) — exact occurrence ledger, context merge, and dedupe
+- [runtime/](runtime/) — bundled, version-sensitive CDP adapters for messages, pins, media, and OCR
+- [runtime/fetch_zalo_media.mjs](runtime/fetch_zalo_media.mjs) — bounded authenticated media export
+- [evals/evals.json](evals/evals.json) — small private-data-free behavior contracts

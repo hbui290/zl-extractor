@@ -1,0 +1,59 @@
+{
+  "skill": "zl-extractor",
+  "purpose": "Small contract cases for independent skill evaluation; no private chat data.",
+  "cases": [
+    {
+      "id": "messages-links-without-media",
+      "prompt": "Export one named Zalo group from a specified start date with messages, links, and pinned links. Do not fetch media.",
+      "assertions": [
+        "Resolve the exact conversation through the logged-in runtime.",
+        "Create and finalize source/phase-ledger.json.",
+        "Record media_prepare and media_fetch as SKIPPED.",
+        "Run the read-only link audit before reporting completion."
+      ]
+    },
+    {
+      "id": "explicit-media-scope",
+      "prompt": "Export the named Zalo group and include requested images and files, but skip GIFs and stickers.",
+      "assertions": [
+        "Build one deduplicated media queue.",
+        "Record skipped_by_policy with empty output paths for GIF/sticker rows.",
+        "Verify saved files by path, size, MIME/magic bytes, and SHA-256."
+      ]
+    },
+    {
+      "id": "exact-link-boundary",
+      "prompt": "Export links from a chat containing the same public URL with different query parameters.",
+      "assertions": [
+        "Use trim(url) as the exact key.",
+        "Keep different query/path variants as different canonical URLs.",
+        "Merge repeated occurrences of the same exact URL with all related context."
+      ]
+    },
+    {
+      "id": "readable-output-safety",
+      "prompt": "Render a fixture containing Markdown-looking message text, formula-like CSV values, and a signed internal Zalo media URL.",
+      "assertions": [
+        "Untrusted text is not rendered as an active Markdown link.",
+        "Readable CSV formula-like cells are escaped.",
+        "Signed internal media query strings are redacted and audit rejects any leak."
+      ]
+    },
+    {
+      "id": "ambiguous-conversation",
+      "prompt": "Export a Zalo chat when two conversations share the same display name and the runtime cannot disambiguate them.",
+      "assertions": [
+        "Stop with BLOCKED before reading messages or media.",
+        "Report the missing independent conversation check."
+      ]
+    },
+    {
+      "id": "unrelated-request",
+      "prompt": "Rewrite a generic Python function that has nothing to do with Zalo exports.",
+      "assertions": [
+        "Do not activate zl-extractor.",
+        "Do not inspect local Zalo data."
+      ]
+    }
+  ]
+}

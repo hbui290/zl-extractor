@@ -6,24 +6,20 @@ import csv
 import json
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from export_paths import contained_attachment, export_paths
+from item_checkpoint import checkpoint_path, validate_checkpoints
+from export_paths import (
+    contained_attachment,
+    export_paths,
+    has_signed_internal_media_query,
+    is_internal_media_url,
+)
+from run_plan import plan_path, validate_plan
 
 
 def read_csv(path):
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
-
-
-def is_internal_media(url):
-    try:
-        host = (urlsplit(url).hostname or "").lower()
-    except ValueError:
-        return False
-    return host.endswith((".zdn.vn", ".zadn.vn", ".dlmd.me", ".dlfl.vn")) and any(
-        token in host for token in ("stal", "ava-talk", "zpg-r", "photo-link-talk")
-    )
 
 
 def exact_url(row):
@@ -37,6 +33,24 @@ def int_count(row):
         return 0
 
 
+def occurrence_counts(rows):
+    counts = {}
+    for row in rows:
+        url = exact_url(row)
+        counts[url] = counts.get(url, 0) + int_count(row)
+    return counts
+
+
+def signed_media_urls(rows):
+    urls = set()
+    for row in rows:
+        for field, value in row.items():
+            field_name = str(field or "").lower()
+            if ("url" in field_name or "link" in field_name) and has_signed_internal_media_query(value):
+                urls.add(str(value).strip())
+    return sorted(urls)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("export_root", type=Path)
@@ -45,15 +59,24 @@ def main():
     paths = export_paths(root)
     messages = paths["machine"]
     reports = paths["metadata"]
-    raw_path = messages / "links-classified-occurrences.csv"
+    occurrence_root = messages if paths["new_layout"] else reports
+    raw_path = occurrence_root / "links-classified-occurrences.csv"
     if not raw_path.exists():
-        raw_path = messages / "links-occurrences.csv"
+        raw_path = occurrence_root / "links-occurrences.csv"
     primary_path = messages / "links.csv"
-    media_path = messages / "zalo-media-links.csv"
+    media_path = occurrence_root / "zalo-media-links.csv"
     manifest_path = reports / "manifest.json"
     classification_report_path = reports / "link-classification.json"
+    run_plan_file = plan_path(root)
+    checkpoint_file = checkpoint_path(root)
 
     failures = []
+    run_plan_issues = validate_plan(root) if run_plan_file.exists() else []
+    checkpoint_issues = validate_checkpoints(root) if checkpoint_file.exists() else []
+    if run_plan_issues:
+        failures.extend(f"run plan: {issue}" for issue in run_plan_issues)
+    if checkpoint_issues:
+        failures.extend(f"item checkpoint: {issue}" for issue in checkpoint_issues)
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     else:
@@ -71,13 +94,13 @@ def main():
     raw_groups = {}
     for row in raw:
         raw_groups.setdefault(exact_url(row), []).append(row)
-    raw_user = {url: rows for url, rows in raw_groups.items() if not is_internal_media(url)}
-    raw_media = {url: rows for url, rows in raw_groups.items() if is_internal_media(url)}
+    raw_user = {url: rows for url, rows in raw_groups.items() if not is_internal_media_url(url)}
+    raw_media = {url: rows for url, rows in raw_groups.items() if is_internal_media_url(url)}
     primary_urls = [exact_url(row) for row in primary]
     media_urls = [exact_url(row) for row in media]
     if any(not row.get("canonical_url") or row.get("canonical_url") != exact_url(row) for row in primary + media):
         failures.append("canonical_url is missing or differs from trim(url) in canonical links")
-    resolution_path = messages / "link-review-resolutions.csv"
+    resolution_path = occurrence_root / "link-review-resolutions.csv"
     resolutions = {}
     if resolution_path.exists():
         for row in read_csv(resolution_path):
@@ -105,8 +128,15 @@ def main():
 
     if len(primary_urls) != len(set(primary_urls)):
         failures.append(f"duplicate canonical URL remains in {primary_path.relative_to(root)}")
-    if any(is_internal_media(url) for url in primary_urls):
+    if any(is_internal_media_url(url) for url in primary_urls):
         failures.append(f"internal media URL leaked into {primary_path.relative_to(root)}")
+    signed_urls = set(signed_media_urls(raw + primary + media))
+    for candidate_root in {messages, reports}:
+        for candidate in candidate_root.rglob("*.csv"):
+            signed_urls.update(signed_media_urls(read_csv(candidate)))
+    signed_urls = sorted(signed_urls)
+    if signed_urls:
+        failures.append("signed internal media query remains in export data")
     if set(primary_urls) != set(raw_user):
         failures.append("primary user-facing URL set does not match exact URL partition from raw ledger")
     if set(media_urls) != set(raw_media):
@@ -117,11 +147,15 @@ def main():
         failures.append("user-facing occurrence sum does not reconcile with raw ledger")
     if sum(int_count(row) for row in media) != sum(len(rows) for rows in raw_media.values()):
         failures.append("media occurrence sum does not reconcile with raw ledger")
+    if occurrence_counts(primary) != {url: len(rows) for url, rows in raw_user.items()}:
+        failures.append("per-URL user-facing occurrence counts do not reconcile with raw ledger")
+    if occurrence_counts(media) != {url: len(rows) for url, rows in raw_media.items()}:
+        failures.append("per-URL media occurrence counts do not reconcile with raw ledger")
     if sum(int_count(row) for row in primary) + sum(int_count(row) for row in media) != len(raw):
         failures.append("combined occurrence sum does not equal raw occurrence rows")
     if any(not row.get("message_ids") and not row.get("pin_ids") for row in primary):
         failures.append("primary row is missing message_ids and pin_ids")
-    attachments_path = messages / "attachments.csv"
+    attachments_path = occurrence_root / "attachments.csv"
     attachment_rows = read_csv(attachments_path) if attachments_path.exists() else []
     saved_statuses = {"copied", "downloaded", "preview_only"}
     for row in attachment_rows:
@@ -135,7 +169,7 @@ def main():
                 failures.append(f"saved attachment path is missing or outside export: {relative}")
             elif candidate.stat().st_size <= 0:
                 failures.append(f"saved attachment is empty: {relative}")
-    review_path = messages / "link-review.csv"
+    review_path = occurrence_root / "link-review.csv"
     review_file_rows = read_csv(review_path) if review_path.exists() else []
     if review_rows and not review_path.exists():
         failures.append("classification review queue is missing")
@@ -185,6 +219,10 @@ def main():
     pin_audit_status = link_manifest.get("pinAuditStatus") or manifest.get("pinAuditStatus") or "unknown"
     pin_audit_completeness = link_manifest.get("pinAuditCompleteness") or manifest.get("pinAuditCompleteness") or "unknown"
     warnings = []
+    if paths["new_layout"] and not run_plan_file.exists():
+        warnings.append("run plan is missing; requested scope cannot be independently verified")
+    if paths["new_layout"] and not checkpoint_file.exists():
+        warnings.append("item checkpoint file is missing; resume coverage cannot be independently verified")
     if pin_audit_status not in {"complete", "complete_with_zero_links"} or pin_audit_completeness not in {"complete", "complete_with_zero_links"}:
         warnings.append("pin audit is not proven complete; link coverage is partial")
     if review_rows:
@@ -213,6 +251,9 @@ def main():
         "unresolved_category_conflict_rows": len(unresolved_category_conflict_rows),
         "context_alternative_rows": len(context_alternative_rows),
         "classification_review_rows": len(review_rows),
+        "signed_internal_media_query_urls": len(signed_urls),
+        "run_plan_status": "PASS" if run_plan_file.exists() and not run_plan_issues else ("MISSING" if not run_plan_file.exists() else "FAIL"),
+        "item_checkpoint_status": "PASS" if checkpoint_file.exists() and not checkpoint_issues else ("MISSING" if not checkpoint_file.exists() else "FAIL"),
         "pin_audit_status": pin_audit_status,
         "pin_audit_completeness": pin_audit_completeness,
         "failures": failures,

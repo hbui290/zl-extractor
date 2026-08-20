@@ -9,7 +9,7 @@ Keep two layers with different jobs:
 
 ```text
 readable/  = the first thing a person opens
-raw/       = exact machine-readable inputs for audit/reprocessing
+raw/       = machine-readable inputs for audit/reprocessing
 source/    = manifest and provenance; never the main reading view
 ```
 
@@ -53,12 +53,14 @@ meaning or invent context.
 └── source/
     ├── manifest.json
     ├── link-classification.json
-    └── source-info.json
+    ├── source-info.json
+    └── phase-ledger.json
 ```
 
 For compatibility, an old `01-messages/`, `02-attachments/`, and `03-reports/`
 export may be read. The renderer mirrors those files into `raw/` without
-deleting or editing the legacy files.
+deleting or editing the legacy files; signed internal Zalo media query strings
+are removed from the derived mirror.
 
 ## Message presentation
 

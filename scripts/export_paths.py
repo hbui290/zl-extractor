@@ -3,6 +3,11 @@
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+
+INTERNAL_MEDIA_SUFFIXES = (".zdn.vn", ".zadn.vn", ".dlmd.me", ".dlfl.vn")
+INTERNAL_MEDIA_HOST_TOKENS = ("stal", "ava-talk", "zpg-r", "photo-link-talk")
 
 
 def export_paths(root):
@@ -27,6 +32,39 @@ def safe_category_slug(value, fallback="other"):
     """Return a filename-safe category without trusting export data."""
     value = str(value or "").strip().lower()
     return value if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value) else fallback
+
+
+def is_internal_media_url(url):
+    """Identify Zalo's signed media hosts without treating external URLs as media."""
+    try:
+        host = (urlsplit(str(url or "").strip()).hostname or "").lower()
+    except ValueError:
+        return False
+    return host.endswith(INTERNAL_MEDIA_SUFFIXES) and any(
+        token in host for token in INTERNAL_MEDIA_HOST_TOKENS
+    )
+
+
+def has_signed_internal_media_query(url):
+    """Return whether an internal Zalo media URL still carries a query token."""
+    if not is_internal_media_url(url):
+        return False
+    try:
+        return bool(urlsplit(str(url or "").strip()).query)
+    except ValueError:
+        return False
+
+
+def redact_internal_media_url(url):
+    """Remove query/fragment tokens from a Zalo media URL; preserve other URLs exactly."""
+    value = str(url or "")
+    if not is_internal_media_url(value):
+        return value
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return value
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 def contained_attachment(root, relative_path):

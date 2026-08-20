@@ -1,4 +1,4 @@
 interface:
   display_name: "ZL Extractor"
-  short_description: "Export Zalo chats and attachments safely"
-  default_prompt: "Use $zl-extractor to export a named Zalo chat with organized messages and attachments."
+  short_description: "Export Zalo chats and links safely"
+  default_prompt: "Use $zl-extractor to export a named Zalo chat with organized messages, links, and pins; include media only when explicitly requested."

@@ -123,9 +123,10 @@ def main():
     paths = export_paths(root)
     assert_source_read_only(root, paths["metadata"])
     messages = paths["machine"]
+    occurrence_root = messages if paths["new_layout"] else paths["metadata"]
     reports = paths["metadata"]
 
-    raw_classified_path = messages / "links-classified-occurrences.csv"
+    raw_classified_path = occurrence_root / "links-classified-occurrences.csv"
     raw_classified = [update_row(row) for row in read_csv(raw_classified_path)]
     write_csv(raw_classified_path, raw_classified)
 
@@ -135,7 +136,7 @@ def main():
     raw_media = {url: rows for url, rows in raw_groups.items() if is_media_host(parsed(url)[0])}
 
     primary = [update_row(row) for row in read_csv(messages / "links.csv")]
-    media_path = messages / "zalo-media-links.csv"
+    media_path = occurrence_root / "zalo-media-links.csv"
     media = [update_row(row) for row in read_csv(media_path)] if media_path.exists() else []
     all_rows = primary + media
     for row in all_rows:

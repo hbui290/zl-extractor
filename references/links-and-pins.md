@@ -38,6 +38,18 @@ observed_categories, context_alternatives
 Internal Zalo CDN/media references are classified as `zalo-media` and written to
 `raw/zalo-media-links.csv`, never to the user-facing link index.
 
+The normalized pin adapter writes `raw/pins.csv` with `source=pin` and preserves
+`pin_id`, related `message_id`, timestamp, sender, title/text, and extracted URL
+fields. The link stage consumes both normalized inputs:
+
+```bash
+python3 -B scripts/extract_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+python3 -B scripts/apply_category_rules.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
+```
+
+If the run plan requires pins and `raw/pins.csv` is absent, stop the link phase
+as `BLOCKED`/`PARTIAL`; do not silently treat the missing pin panel as zero pins.
+
 ## Classification
 
 Use host/path evidence first, then the nearest message, quote, pin title, and

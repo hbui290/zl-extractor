@@ -24,8 +24,9 @@ def main():
     machine = paths["machine"]
     metadata = paths["metadata"]
     source = machine / "links-classified.csv"
-    output = machine / "link-review.csv"
-    resolution_path = machine / "link-review-resolutions.csv"
+    review_root = machine if paths["new_layout"] else metadata
+    output = review_root / "link-review.csv"
+    resolution_path = review_root / "link-review-resolutions.csv"
     resolutions = {}
     if resolution_path.exists():
         for resolved in read_csv(resolution_path):
