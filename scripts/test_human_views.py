@@ -59,6 +59,11 @@ def main():
         write_csv(root / "01-messages/links.csv", link_fields, [link_row])
         write_csv(root / "01-messages/links-classified.csv", link_fields, [link_row])
         write_csv(
+            root / "03-reports/pins.csv",
+            ["pin_id", "timestamp", "sender", "title", "text", "urls"],
+            [{"pin_id": "p1", "timestamp": "2026-07-16 10:04", "sender": "A", "title": "Pinned tool", "text": "Try make.com", "urls": "make.com"}],
+        )
+        write_csv(
             root / "03-reports/links-classified-occurrences.csv",
             ["url"],
             [{"url": "https://example.com/tool"}, {"url": "https://example.com/tool"}],
@@ -83,6 +88,7 @@ def main():
         assert (root / "readable/index.md").exists()
         assert (root / "readable/messages.md").exists()
         assert (root / "readable/links.csv").exists()
+        assert (root / "readable/pins.md").exists()
         assert (root / "readable/media.csv").exists()
         assert (root / "readable/review.csv").exists()
         assert (root / "readable/links-by-category/tool-platform.md").exists()
@@ -105,12 +111,19 @@ def main():
         links = (root / "readable/links.md").read_text(encoding="utf-8")
         assert "[context](https://evil.example)" not in links
         assert "https://example.com/tool" in links
+        assert "### 01. example.com/tool" in links
+        bare_card = "\n".join(link_card({"url": "make.com", "category": "tool-platform"}))
+        assert "https://make.com" in bare_card
+        assert "unavailable" not in bare_card
+        pins = (root / "readable/pins.md").read_text(encoding="utf-8")
+        assert "make.com" in pins
+        assert "**External links:** 1" in pins
         signed_card = "\n".join(link_card({
             "url": "https://photo-link-talk.zdn.vn/private/file.jpg?token=secret&sign=abc",
             "category": "other",
         }))
         assert "token=secret" not in signed_card
-        assert "redacted" in signed_card.lower()
+        assert "internal attachment" in signed_card.lower()
         legacy_media = root / "legacy-media.csv"
         legacy_media.write_text(
             "url,canonical_url\n"
@@ -138,6 +151,7 @@ def main():
             check=False,
         )
         assert audit.returncode == 2, audit.stdout + audit.stderr
+        assert "Link archive" in audit.stdout
         before = digest_tree(root)
         build(root)
         assert before == digest_tree(root)

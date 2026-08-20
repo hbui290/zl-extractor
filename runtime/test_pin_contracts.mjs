@@ -19,5 +19,12 @@ assert.match(source, /pin_page_cap_exceeded/, "pin adapter must cap rows");
 assert.match(source, /atomicWrite/, "pin output must be atomic");
 assert.match(source, /waitForZaloPage/, "pin adapter must wait for a ready renderer");
 assert.match(source, /pinAuditCompleteness/, "pin adapter must record completeness");
+assert.match(source, /bareTlds/, "pin adapter must recognize conservative bare domains");
+assert.match(source, /depth > 8/, "pin adapter must inspect nested pin payloads");
+assert.match(source, /topic.data/, "pin adapter must inspect the topic payload");
+assert.match(source, /missing_pin_end_signal/, "pin adapter must not claim completeness without an end signal");
+assert.match(source, /reportedPinCount/, "pin audit must preserve a reported pin total when available");
+assert.match(source, /reportedPinCount\s*===\s*rows\.length/, "pin audit must require an exact reported total");
+assert.match(source, /collectText/, "pin reader must not serialize nested message objects as [object Object]");
 
 console.log("pin_contracts=PASS");

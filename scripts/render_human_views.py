@@ -10,12 +10,14 @@ import argparse
 import csv
 import html
 import json
+import os
 import re
 import shutil
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from export_paths import (
     assert_source_read_only,
@@ -25,6 +27,7 @@ from export_paths import (
     redact_internal_media_url,
     safe_category_slug,
 )
+from url_rules import find_urls, is_bare_url, parseable_url, strip_urls
 
 
 CATEGORY_LABELS = {
@@ -36,8 +39,11 @@ CATEGORY_LABELS = {
     "other": "Other",
 }
 
+DISPLAY_TIMEZONE = ZoneInfo(os.environ.get("ZL_DISPLAY_TIMEZONE", "Asia/Ho_Chi_Minh"))
+
 RAW_MIRRORS = {
     "messages.csv": "01-messages/messages.csv",
+    "pins.csv": "03-reports/pins.csv",
     "messages.txt": "01-messages/messages.txt",
     "links.csv": "01-messages/links.csv",
     "links-classified.csv": "01-messages/links-classified.csv",
@@ -52,6 +58,7 @@ RAW_MIRRORS = {
 SOURCE_MIRRORS = {
     "manifest.json": "03-reports/manifest.json",
     "link-classification.json": "03-reports/link-classification.json",
+    "link-archive-audit.json": "03-reports/link-archive-audit.json",
 }
 
 
@@ -142,7 +149,7 @@ def format_time(value):
             timestamp = float(value)
             if timestamp > 10_000_000_000:
                 timestamp /= 1000
-            return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            return datetime.fromtimestamp(timestamp, tz=DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M %Z")
         except (OverflowError, OSError, ValueError):
             return value
     return value.replace("T", " ").replace("Z", " UTC", 1)
@@ -254,10 +261,28 @@ def copy_legacy_input(legacy, destination):
 
 def safe_http_url(value):
     try:
-        parsed = urlsplit(str(value or "").strip())
+        parsed = urlsplit(parseable_url(value))
     except ValueError:
         return False
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def display_url(value):
+    value = str(value or "").strip()
+    return parseable_url(value) if is_bare_url(value) else value
+
+
+def human_context(value):
+    text = html.unescape(str(value or ""))
+    if text.strip().lower() in {"[object object]", "undefined", "null"}:
+        return ""
+    text = strip_urls(text)
+    text = re.sub(r"[*_`~]+", "", text)
+    text = re.sub(r"\\([\\[\\]\\(\\)])", r"\1", text)
+    text = re.sub(r"\s+", " ", text).strip(" |:,-")
+    if re.fullmatch(r"[@#][\wÀ-ỹ ._-]+", text):
+        return ""
+    return text[:200] if len(text) >= 8 else ""
 
 
 def manifest_value(manifest, keys):
@@ -275,15 +300,23 @@ def manifest_value(manifest, keys):
 
 
 def url_title(row):
-    context = pick(row, "context_name", "context_summary")
-    if context and context.lower() not in {"uncategorized", "unknown"}:
-        return clean_heading(context, "Link")[:140]
     url = pick(row, "url", "canonical_url")
     try:
-        parsed = urlsplit(url)
-        return clean_heading((parsed.netloc + parsed.path).strip("/"), "Link")[:140]
+        parsed = urlsplit(parseable_url(url))
+        label = (parsed.netloc + parsed.path).strip("/")
+        return clean_heading(label, "Link")[:120]
     except ValueError:
         return clean_heading(url, "Link")[:140]
+
+
+def link_sort_key(row):
+    url = pick(row, "url", "canonical_url")
+    try:
+        parsed = urlsplit(parseable_url(url))
+        label = (parsed.netloc + parsed.path).lower()
+    except ValueError:
+        label = url.lower()
+    return (label, format_time(pick(row, "first_seen", "timestamp")))
 
 
 def markdown_table(value):
@@ -300,7 +333,7 @@ def message_text(row):
 
 
 def message_sender(row):
-    return clean_heading(pick(row, "sender_name", "sender", "senderName", "author"), "Unknown sender")
+    return clean_heading(pick(row, "sender_name", "sender", "senderName", "author"), "")
 
 
 def render_messages(rows, title, manifest):
@@ -317,9 +350,10 @@ def render_messages(rows, title, manifest):
             current_date = day
         time = format_time(pick(row, "timestamp", "sent_at_local", "sent_at_utc", "sendDttm"))
         time = time.split(" ", 1)[1] if " " in time else time
-        heading = f"{time} — {message_sender(row)}" if time else message_sender(row)
+        sender = message_sender(row)
+        heading = f"{time} — {sender}" if time and sender else sender or time or "Message"
         lines.extend([f"### {markdown_literal(heading)}", ""])
-        kind = pick(row, "message_type", "type", "msgType")
+        kind = pick(row, "message_type", "msg_type", "type", "msgType")
         if kind and kind.lower() not in {"text", "normal", "1"}:
             lines.append(f"> _[{kind}]_")
         quote = pick(row, "quote_text", "quote", "reference_text")
@@ -333,7 +367,7 @@ def render_messages(rows, title, manifest):
     return "\n".join(lines)
 
 
-def link_card(row):
+def link_card(row, number=None):
     url = pick(row, "url", "canonical_url")
     category = safe_category_slug(pick(row, "category"))
     confidence = pick(row, "confidence") or "unknown"
@@ -343,21 +377,24 @@ def link_card(row):
     sources = ", ".join(split_values(pick(row, "sources", "source"))) or "message"
     context = pick(row, "context_summary")
     if is_internal_media_url(url):
-        redacted_url = redact_internal_media_url(url)
-        link_line = f"**Zalo media URL:** redacted (signed query omitted) `{markdown_literal(redacted_url)}`"
+        link_line = "**Zalo media:** internal attachment; binary was not requested"
     elif safe_http_url(url):
-        link_line = f"[Open link](<{url}>)"
+        link_line = f"[Open link](<{display_url(url)}>)"
     else:
         link_line = "**URL:** unavailable or invalid"
-    lines = [f"### {markdown_literal(url_title(row))}", link_line, ""]
+    heading = url_title(row)
+    if number is not None:
+        heading = f"{number:02d}. {heading}"
+    lines = [f"### {markdown_literal(heading)}", link_line, ""]
     lines.append(f"- **Category:** `{category}` · **Confidence:** `{confidence}`")
     lines.append(f"- **Shared:** {count} time(s) · **Source:** {markdown_literal(sources)}")
     if first_seen:
         seen = first_seen if not last_seen or last_seen == first_seen else f"{first_seen} → {last_seen}"
         lines.append(f"- **Seen:** {seen}")
+    context = human_context(context)
     if context:
         lines.append(f"- **Context:** {markdown_literal(context)}")
-    alternatives = pick(row, "context_alternatives")
+    alternatives = human_context(pick(row, "context_alternatives"))
     if alternatives:
         lines.append(f"- **Needs attention:** {markdown_literal(alternatives)}")
     lines.append("")
@@ -376,15 +413,15 @@ def render_links(rows, title="Links"):
     for category in sorted(groups):
         label = CATEGORY_LABELS.get(category, category.replace("-", " ").title())
         lines.extend([f"## {label} ({len(groups[category])})", ""])
-        for row in groups[category]:
-            lines.extend(link_card(row))
+        for number, row in enumerate(sorted(groups[category], key=link_sort_key), 1):
+            lines.extend(link_card(row, number))
     return "\n".join(lines)
 
 
 def render_media(rows, root):
     lines = ["# Attachments", "", "> Binary files are listed here; GIFs and stickers are skipped by policy.", ""]
     if not rows:
-        return "\n".join(lines + ["No attachment records were found.", ""])
+        return "\n".join(lines + ["No downloaded attachment records were found.", "Internal Zalo media references, if any, are listed separately in `pins.md`.", ""])
     lines.extend(["| When | Sender | Type | File | Status |", "|---|---|---|---|---|"])
     for row in sorted(rows, key=sort_key):
         relative = pick(row, "relative_output_path", "output_path")
@@ -406,6 +443,40 @@ def render_media(rows, root):
     return "\n".join(lines + [""])
 
 
+def render_pins(rows):
+    lines = ["# Pinned records", "", "> Pinned records are shown separately from the chronological message link list.", ""]
+    if not rows:
+        return "\n".join(lines + ["No normalized pinned records were found.", ""])
+    lines.extend([f"**Pinned records:** {len(rows)}", ""])
+    for index, row in enumerate(sorted(rows, key=sort_key), 1):
+        urls = find_urls("\n".join(pick(row, field) for field in ("title", "text", "url", "urls")))
+        title = human_context(pick(row, "title", "text"))
+        if not title:
+            title = next((url_title({"url": url}) for url in urls if not is_internal_media_url(url)), "Pinned item")
+        lines.extend([f"## {index}. {markdown_literal(title)}", ""])
+        when = format_time(pick(row, "timestamp"))
+        sender = pick(row, "sender")
+        if when or sender:
+            lines.append(f"- **When:** {markdown_literal(when or 'Unknown time')} · **Sender:** {markdown_literal(sender or 'Unknown sender')}")
+        body = human_context(pick(row, "text"))
+        if body:
+            lines.append(f"- **Context:** {markdown_literal(body)}")
+        external_urls = [url for url in urls if not is_internal_media_url(url)]
+        media_urls = [url for url in urls if is_internal_media_url(url)]
+        lines.append(f"- **External links:** {len(external_urls)}")
+        for url in external_urls:
+            if safe_http_url(url):
+                lines.append(f"  - [{markdown_literal(url)}](<{display_url(url)}>)")
+            else:
+                lines.append(f"  - `{markdown_literal(url)}`")
+        if media_urls:
+            lines.append(f"- **Internal Zalo media references:** {len(media_urls)} (not exported)")
+        if not external_urls and not media_urls:
+            lines.append("- **Links:** none detected")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_review(rows):
     lines = ["# Review queue", "", "> Only unresolved link classifications appear here.", ""]
     if not rows:
@@ -418,16 +489,60 @@ def render_review(rows):
     return "\n".join(lines)
 
 
-def render_index(root, title, messages, links, occurrences, attachments, review, manifest):
+def render_index(root, title, messages, links, occurrences, pins, attachments, review, manifest):
     link_manifest = manifest.get("links", {}) if isinstance(manifest, dict) else {}
     status = manifest.get("exportStatus", "UNKNOWN") if isinstance(manifest, dict) else "UNKNOWN"
     raw_count = link_manifest.get("rawOccurrenceRows", len(occurrences))
+    source = manifest.get("source", {}) if isinstance(manifest, dict) else {}
+    link_archive = read_json(find_input(root, "link-archive-audit.json", source=True))
+    archive_count = link_archive.get("reportedLinkCount")
+    archive_status = str(link_archive.get("status") or "").strip().lower()
+    source_start = source.get("startAt") or ""
+    source_end = source.get("endAt") or ""
+    source_counts = defaultdict(int)
+    pin_external_urls = set()
+    pin_external_occurrences = 0
+    pin_media_occurrences = 0
+    for row in occurrences:
+        source = pick(row, "source") or "unknown"
+        if is_internal_media_url(pick(row, "url")):
+            if source == "pin":
+                pin_media_occurrences += 1
+            continue
+        source_counts[source] += 1
+        if source == "pin":
+            pin_external_occurrences += 1
+            pin_external_urls.add(pick(row, "url"))
+    scope = source_start or source_end or "all available messages"
+    if source_start and source_end:
+        scope = f"{source_start} → {source_end}"
+    elif source_start:
+        scope = f"from {source_start}"
+    elif source_end:
+        scope = f"through {source_end}"
+    warnings = []
+    if link_manifest.get("pinAuditStatus") not in {"complete", "complete_with_zero_links"} or link_manifest.get("pinAuditCompleteness") not in {"complete", "complete_with_zero_links"}:
+        warnings.append("Pin coverage is not proven complete; compare `pins.md` with Zalo before treating the link total as final.")
+    if review:
+        warnings.append(f"{len(review)} link(s) need classification review.")
+    if archive_count is None and not link_manifest.get("linkArchiveCount"):
+        warnings.append("Zalo's Link archive was not enumerated by the runtime; compare its visible count before treating coverage as final.")
+    elif archive_status not in {"complete", "verified"}:
+        warnings.append("The Zalo Link archive count is observed but not reconciled to exported rows.")
     lines = [f"# {title}", "", "> Human-first index for this Zalo export.", ""]
     lines.extend([
         f"- **Status:** `{status}`",
+        f"- **Message scope:** `{scope}`",
         f"- **Messages:** {len(messages)}",
-        f"- **Readable links:** {len(links)}",
+        f"- **User-facing unique links:** {len(links)}",
+        *([f"- **Zalo Link archive count:** {archive_count} (`{archive_status or 'observed'}`)"] if archive_count is not None else []),
+        f"- **All exact unique URLs:** {link_manifest.get('allExactUniqueUrls', len(links))}",
         f"- **Raw link occurrences:** {raw_count}",
+        f"- **Message external-link occurrences:** {source_counts.get('message', 0)}",
+        f"- **Pinned external-link occurrences:** {pin_external_occurrences}",
+        f"- **Pinned internal-media references:** {pin_media_occurrences}",
+        f"- **Pinned records:** {link_manifest.get('enumeratedPinCount', len(pins))}",
+        f"- **Pinned external unique URLs:** {len(pin_external_urls)}",
         f"- **Attachment records:** {len(attachments)}",
         f"- **Unresolved review rows:** {len(review)}",
         "",
@@ -435,6 +550,7 @@ def render_index(root, title, messages, links, occurrences, attachments, review,
         "",
         "- [Conversation](messages.md)",
         "- [Links](links.md)",
+        "- [Pinned links](pins.md)",
         "- [Link table](links.csv)",
         "- [Attachments](media.md)",
         "- [Attachment table](media.csv)",
@@ -447,9 +563,13 @@ def render_index(root, title, messages, links, occurrences, attachments, review,
         "- `raw/` — machine-readable copies used for audit; do not edit.",
         "- `source/` — manifest and provenance for this extraction.",
         "",
+        "## Warnings",
+        "",
+        *(warnings or ["None."]),
+        "",
         "## Notes",
         "",
-        "The archive keeps original records in the raw layer while the readable layer groups messages by day and presents links by category. A `PARTIAL` status is an honest limitation report, not a silent omission.",
+        "The archive keeps original records in the raw layer while the readable layer groups messages by day, separates pinned links, and presents links by category. A `PARTIAL` status is an honest limitation report, not a silent omission.",
         "",
     ])
     return "\n".join(lines)
@@ -471,6 +591,7 @@ def build(root):
         "Zalo conversation",
     )
     messages = read_csv(find_input(root, "messages.csv"))
+    pins = read_csv(find_input(root, "pins.csv"))
     links = read_csv(find_input(root, "links.csv"))
     occurrences = read_csv(find_input(root, "links-classified-occurrences.csv"))
     if not occurrences:
@@ -478,9 +599,10 @@ def build(root):
     attachments = read_csv(find_input(root, "attachments.csv"))
     review = read_csv(find_input(root, "link-review.csv"))
 
-    (readable / "index.md").write_text(render_index(root, title, messages, links, occurrences, attachments, review, manifest), encoding="utf-8")
+    (readable / "index.md").write_text(render_index(root, title, messages, links, occurrences, pins, attachments, review, manifest), encoding="utf-8")
     (readable / "messages.md").write_text(render_messages(messages, title, manifest), encoding="utf-8")
     (readable / "links.md").write_text(render_links(links), encoding="utf-8")
+    (readable / "pins.md").write_text(render_pins(pins), encoding="utf-8")
     (readable / "media.md").write_text(render_media(attachments, root), encoding="utf-8")
     (readable / "review.md").write_text(render_review(review), encoding="utf-8")
     write_table_csv(
@@ -528,6 +650,7 @@ def build(root):
         "messages": len(messages),
         "links": len(links),
         "occurrences": len(occurrences),
+        "pins": len(pins),
         "attachments": len(attachments),
         "review": len(review),
         "mirrored_raw_files": len(mirrored),

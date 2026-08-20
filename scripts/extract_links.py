@@ -16,6 +16,7 @@ from export_paths import (
     redact_internal_media_url,
     safe_category_slug,
 )
+from url_rules import find_url_occurrences
 
 
 URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
@@ -90,7 +91,7 @@ def _context(row, source):
     name = _pick(row, "context_name", "title", "subject", "name")
     summary = " | ".join(_unique(
         str(row.get(field, "") or "").strip()
-        for field in ("context_summary", "text", "message", "content", "description", "caption", "quote_text", "quote", "reference_text", "reference", "url", "urls")
+        for field in ("context_summary", "text", "message", "content", "description", "caption", "quote_text", "quote", "reference_text", "reference", "structured_links", "url", "urls")
     ))
     summary = _redact_context(re.sub(r"\s+", " ", summary).strip())
     name = _redact_context(name)
@@ -103,12 +104,12 @@ def _context(row, source):
 
 def _scan_fields(row, source):
     if source == "pin":
-        values = [str(value) for key, value in row.items() if key and value and (
+        values = [(key, str(value)) for key, value in row.items() if key and value and (
             any(token in key.lower() for token in ("url", "link", "text", "title", "content", "description", "caption"))
         )]
     else:
-        fields = ("text", "message", "content", "quote_text", "quote", "reference_text", "reference", "url", "link")
-        values = [str(row.get(field, "")) for field in fields if row.get(field)]
+        fields = ("text", "message", "content", "quote_text", "quote", "reference_text", "reference", "url", "link", "structured_links")
+        values = [(field, str(row.get(field, ""))) for field in fields if row.get(field)]
     return _unique(values)
 
 
@@ -121,14 +122,22 @@ def _occurrences(rows, source):
         sender = _pick(row, "sender", "sender_name", "from_name")
         context_name, context_summary = _context(row, source)
         seen_pin_urls = set()
-        for field_value in _scan_fields(row, source):
-            for match in URL_RE.findall(field_value):
-                url = _trim_match(match)
+        normal_message_urls = set()
+        structured_urls = set()
+        for field_name, field_value in _scan_fields(row, source):
+            for url in find_url_occurrences(field_value):
                 if not url:
                     continue
                 if source == "pin" and url in seen_pin_urls:
                     continue
-                seen_pin_urls.add(url)
+                if source == "pin":
+                    seen_pin_urls.add(url)
+                elif field_name == "structured_links":
+                    if url in normal_message_urls or url in structured_urls:
+                        continue
+                    structured_urls.add(url)
+                else:
+                    normal_message_urls.add(url)
                 safe_url = redact_internal_media_url(url)
                 category, rule = category_rule(safe_url)
                 category = safe_category_slug(category or "other")
@@ -279,7 +288,7 @@ def extract_links(root):
     pin_audit_path = paths["metadata"] / "pin-audit.json"
     if pin_audit_path.exists():
         pin_audit = json.loads(pin_audit_path.read_text(encoding="utf-8"))
-        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "endCondition"):
+        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "reportedPinCount", "endCondition"):
             if key in pin_audit:
                 report[key] = pin_audit[key]
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,7 +307,7 @@ def extract_links(root):
             "rawDuplicateUrlGroups": report["rawDuplicateUrlGroups"],
             "rawMergedExtraOccurrences": report["rawMergedExtraOccurrences"],
         })
-        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "endCondition"):
+        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "reportedPinCount", "endCondition"):
             if key in report:
                 links[key] = report[key]
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

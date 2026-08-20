@@ -17,14 +17,35 @@ may not be in the normal message stream.
 - Run the pin preflight immediately after conversation resolution, before media retrieval. A page cap, thrown request, unchanged cache, or missing `noMore`/explicit-total signal is not complete; do not turn it into `NO_MORE` by guesswork.
 - Use one bounded pagination loop with a repeated-page guard. If the end marker is not observed, stop with `pinAuditCompleteness=unknown`/`PARTIAL` instead of probing the same panel dozens of times.
 
+## Zalo's separate Link archive
+
+The conversation-info `Link` tab is a separate Zalo repository. It is not
+equivalent to the text returned by `loadMessagesForBackup`, and it is not the
+same thing as the pinned-message panel. Keep these ledgers separate:
+
+```text
+message links       = URLs found in the chronological message snapshot
+pinned links        = URLs found in the exact pinned-message panel
+Link archive        = cards enumerated from Zalo's conversation-info Link tab
+```
+
+Record `source/link-archive-audit.json` when the current Zalo build exposes the
+archive, with `reportedLinkCount`, `enumeratedLinkCount`, `status`, and an
+explicit end condition. If the archive cannot be enumerated, keep the export
+`PARTIAL` and say so in `readable/index.md`; never present the message/pin
+ledger as proof that the Link tab is complete. A visible UI count such as
+`75 link trong 2026` is evidence to reconcile, not a substitute for the
+enumerated rows.
+
 ## Occurrence ledger and exact dedupe
 
 1. Write every unmodified occurrence to `raw/links-occurrences.csv` before dedupe.
-2. Set `canonical_url = url.strip()` only. Preserve scheme, host, port, path, query, fragment, encoding, and every affiliate/tracking parameter.
-3. Do not resolve redirects, fuzzy-match domains, or merge URL variants. Different parameters or paths are different canonical URLs.
-4. Group message and pin occurrences by `canonical_url`, then read every related message, quote, and pin record before classifying.
-5. Write exactly one user-facing row per canonical URL. Merge occurrence count, all related message/pin IDs, senders, sources, timestamps, observed categories, and a short evidence-backed context summary.
-6. Keep the raw ledger as the audit trail; repeated sharing is represented by `occurrence_count`, not by duplicate final rows.
+2. Recognize explicit `http(s)://` URLs and conservative bare domains (for example `make.com`). Keep a bare domain's original spelling in raw output; the readable view adds `https://` only to make it clickable.
+3. Set `canonical_url = url.strip()` only after that extraction step. Preserve scheme, host, port, path, query, fragment, encoding, and every affiliate/tracking parameter.
+4. Do not resolve redirects, fuzzy-match domains, or merge URL variants. Different parameters or paths are different canonical URLs. Ambiguous domain-like text stays in review instead of becoming a link.
+5. Group message and pin occurrences by `canonical_url`, then read every related message, quote, and pin record before classifying.
+6. Write exactly one user-facing row per canonical URL. Merge occurrence count, all related message/pin IDs, senders, sources, timestamps, observed categories, and a short evidence-backed context summary.
+7. Keep the raw ledger as the audit trail; repeated sharing is represented by `occurrence_count`, not by duplicate final rows.
 
 The canonical schema includes:
 
@@ -38,7 +59,9 @@ observed_categories, context_alternatives
 Internal Zalo CDN/media references are classified as `zalo-media` and written to
 `raw/zalo-media-links.csv`, never to the user-facing link index.
 
-The normalized pin adapter writes `raw/pins.csv` with `source=pin` and preserves
+The normalized pin adapter recursively inspects the topic payload and resolved
+message, including nested params/data/payload fields, before it writes
+`raw/pins.csv` with `source=pin` and preserves
 `pin_id`, related `message_id`, timestamp, sender, title/text, and extracted URL
 fields. The link stage consumes both normalized inputs:
 
@@ -118,7 +141,10 @@ raw/link-review.csv
 raw/link-review-resolutions.csv
 ```
 
-Human-facing views are written separately to `readable/links.md` and
-`readable/links-by-category/<category>.md`. Category views are filtered views,
-not another occurrence ledger. Sort them by category, time, and message/pin
-sequence, and keep paths relative to the export.
+Human-facing views are written separately to `readable/links.md`,
+`readable/pins.md`, and `readable/links-by-category/<category>.md`. Category
+views are filtered views, not another occurrence ledger. `pins.md` is the
+reader-facing pin audit and must show each pinned record and its extracted
+links separately from the chronological message link list. Sort category
+views by category, time, and message/pin sequence, and keep paths relative to
+the export.

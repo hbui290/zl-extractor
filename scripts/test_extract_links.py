@@ -49,6 +49,12 @@ def main():
                     "sender": "C",
                     "text": "https://photo-stal-1.zdn.vn/image.jpg?token=secret",
                 },
+                {
+                    "timestamp": "2026-07-16 10:04",
+                    "message_id": "m4",
+                    "sender": "D",
+                    "text": "Bare domain Vmedia.ai; price 2.5k and file video.mp4",
+                },
             ],
         )
         write_csv(
@@ -58,22 +64,24 @@ def main():
                 "timestamp": "2026-07-16 10:04",
                 "pin_id": "p1",
                 "title": "Pinned resource",
-                "content": "Pinned https://example.com/a?x=1",
+                "content": "Pinned https://example.com/a?x=1 and make.com",
                 "url": "https://example.com/a?x=1",
             }],
         )
 
         result = extract_links(root)
-        assert result["occurrences"] == 5
-        assert result["user_links"] == 2
+        assert result["occurrences"] == 7
+        assert result["user_links"] == 4
         assert result["media_links"] == 1
 
         occurrences = read_csv(root / "raw/links-occurrences.csv")
-        assert len(occurrences) == 5
+        assert len(occurrences) == 7
         primary = read_csv(root / "raw/links.csv")
         assert {row["url"] for row in primary} == {
             "https://example.com/a?x=1",
             "https://example.com/a?x=2",
+            "Vmedia.ai",
+            "make.com",
         }
         merged = next(row for row in primary if row["url"].endswith("x=1"))
         assert merged["occurrence_count"] == "3"
@@ -81,9 +89,9 @@ def main():
         assert merged["pin_ids"] == "p1"
         assert "Pinned" in merged["context_summary"]
         report = json.loads((root / "source/link-classification.json").read_text(encoding="utf-8"))
-        assert report["userFacingCanonicalRows"] == 2
+        assert report["userFacingCanonicalRows"] == 4
         assert report["internalMediaCanonicalRows"] == 1
-        assert report["userFacingOccurrenceRows"] == 4
+        assert report["userFacingOccurrenceRows"] == 6
         assert report["internalMediaOccurrenceRows"] == 1
         for output in ("links-occurrences.csv", "links-classified-occurrences.csv", "links.csv", "links-classified.csv", "zalo-media-links.csv"):
             assert "token=secret" not in (root / "raw" / output).read_text(encoding="utf-8")

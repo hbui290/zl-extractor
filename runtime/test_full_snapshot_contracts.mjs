@@ -25,5 +25,7 @@ assert.match(source, /atomicWrite/, "snapshot output must be atomic");
 assert.match(source, /waitForZaloPage/, "snapshot must wait for a ready renderer");
 assert.match(source, /manifest\.json/, "snapshot must initialize the export manifest");
 assert.match(source, /sourceWriteIssued = false/, "snapshot must preserve the source-write guard");
+assert.match(source, /structured_links/, "snapshot must preserve URLs from structured message fields");
+assert.match(source, /bareTlds/, "snapshot must recognize conservative bare domains");
 
 console.log("full_snapshot_contracts=PASS");

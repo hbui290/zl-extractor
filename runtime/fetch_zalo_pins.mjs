@@ -97,7 +97,15 @@ try {
     if (!value || typeof value !== 'string') return value || {};
     try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' ? parsed : {}; } catch { return {}; }
   };
-  const objectValue = (topic) => [topic, parseObject(topic.params), topic.message, parseObject(topic.message?.params)];
+  const objectValue = (topic) => [
+    topic,
+    parseObject(topic.params),
+    topic.message,
+    parseObject(topic.message?.params),
+    parseObject(topic.message),
+    topic.data,
+    topic.payload,
+  ];
   const pick = (objects, keys) => {
     for (const object of objects) {
       if (!object || typeof object !== 'object') continue;
@@ -108,11 +116,49 @@ try {
     }
     return '';
   };
-  const text = (objects, keys) => pick(objects, keys).replace(/\\s+/g, ' ').slice(0, 2000);
+  const collectText = (value, depth = 0, seen = new WeakSet()) => {
+    if (depth > 6 || value == null) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+    const parts = [];
+    for (const key of ['text', 'messageText', 'caption', 'description', 'body', 'content', 'title']) {
+      if (typeof value[key] === 'string' && value[key].trim()) parts.push(value[key].trim());
+      else if (value[key] && typeof value[key] === 'object') parts.push(collectText(value[key], depth + 1, seen));
+    }
+    return parts.filter(Boolean).join(' ');
+  };
+  const text = (objects, keys) => {
+    for (const object of objects) {
+      if (!object || typeof object !== 'object') continue;
+      for (const key of keys) {
+        const value = collectText(object[key]);
+        if (value) return value.replace(/\\s+/g, ' ').slice(0, 2000);
+      }
+    }
+    return '';
+  };
+  const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'pro', 'site', 'tech', 'tv', 'video', 'vn', 'xin', 'xyz']);
+  const trimUrl = (value) => String(value || '').trim().replace(/[.,;:!?]+$/, '').replace(/[)\\]}]+$/, '');
+  const isBareUrl = (value) => {
+    const text = trimUrl(value);
+    if (!text || /^https?:\\/\\//i.test(text)) return false;
+    const host = text.split(/[/?#]/, 1)[0].toLowerCase().replace(/^www\\./, '');
+    const labels = host.split('.');
+    return labels.length >= 2 && bareTlds.has(labels.at(-1)) && /[a-z]/i.test(labels[0]);
+  };
   const collectUrls = (value, depth = 0, seen = new WeakSet(), output = []) => {
-    if (depth > 4 || value == null || output.length >= 20) return output;
+    if (depth > 8 || value == null || output.length >= 200) return output;
     if (typeof value === 'string') {
-      for (const match of value.match(/https?:\\/\\/[^\\s<>"'\\x60]+/gi) || []) output.push(match.replace(/[.,;:!?)]*$/, ''));
+      const explicit = [];
+      for (const match of value.matchAll(/https?:\\/\\/[^\\s<>"'\\x60]+/gi)) {
+        const url = trimUrl(match[0]);
+        if (url) { output.push(url); explicit.push(match.index); }
+      }
+      for (const match of value.matchAll(/(?<![@\\w])(?:www\\.)?(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:\\/[^\\s<>"'\\x60)\\]]*)?/gi)) {
+        const url = trimUrl(match[0]);
+        if (url && isBareUrl(url) && !explicit.some((start) => start <= match.index && match.index < start + url.length)) output.push(url);
+      }
       return output;
     }
     if (typeof value !== 'object' || seen.has(value)) return output;
@@ -141,7 +187,20 @@ try {
       pin_index: String(index + 1),
     });
   }
-  return { conversationId, conversationName: String(target.displayName || ''), adapterToken, rows, topicCount: response.topics.length };
+  const reportedPinCount = pick([response], ['total', 'totalCount', 'topicCount', 'totalTopics', 'totalItems']);
+  const explicitNoMore = response.noMore === true
+    || response.hasMore === false
+    || response.nextCursor === null
+    || (response.nextCursor === undefined && response.hasMore === false);
+  return {
+    conversationId,
+    conversationName: String(target.displayName || ''),
+    adapterToken,
+    rows,
+    topicCount: response.topics.length,
+    reportedPinCount,
+    explicitNoMore,
+  };
   })()`);
 } finally {
   ws.close();
@@ -168,14 +227,19 @@ const csvEscape = (value) => {
 const rows = (data.rows || []).map((row) => Object.fromEntries(fields.map((field) => [field, row[field] || ""])));
 const csv = [fields.join(","), ...rows.map((row) => fields.map((field) => csvEscape(row[field])).join(","))].join("\n") + "\n";
 atomicWrite(pinsPath, csv);
+const reportedPinCountRaw = String(data.reportedPinCount || "").trim();
+const reportedPinCount = /^\d+$/.test(reportedPinCountRaw) ? Number(reportedPinCountRaw) : null;
+const countMatches = Number.isSafeInteger(reportedPinCount) && reportedPinCount === rows.length;
+const pinAuditComplete = Boolean(data.explicitNoMore) || countMatches;
 const audit = {
   conversationId: String(data.conversationId || ""),
   conversationName: String(data.conversationName || ""),
-  pinAuditStatus: "complete",
-  pinAuditCompleteness: "complete",
+  pinAuditStatus: pinAuditComplete ? "complete" : "partial",
+  pinAuditCompleteness: pinAuditComplete ? "complete" : "unknown",
   enumeratedPinCount: rows.length,
   uniquePinLinkCount: new Set(rows.flatMap((row) => String(row.urls || "").split("\n").filter(Boolean))).size,
-  endCondition: "single_runtime_pin_board_response",
+  reportedPinCount,
+  endCondition: pinAuditComplete ? "explicit_pin_total_or_no_more" : "missing_pin_end_signal",
   adapterToken: String(data.adapterToken || ""),
 };
 if (auditPath) atomicWrite(auditPath, `${JSON.stringify(audit, null, 2)}\n`);

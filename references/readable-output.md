@@ -26,6 +26,7 @@ meaning or invent context.
 │   ├── index.md
 │   ├── messages.md
 │   ├── links.md
+│   ├── pins.md
 │   ├── links.csv
 │   ├── links-by-category/
 │   │   ├── <category>.md
@@ -53,6 +54,7 @@ meaning or invent context.
 └── source/
     ├── manifest.json
     ├── link-classification.json
+    ├── link-archive-audit.json   (when Zalo's Link tab is checked)
     ├── source-info.json
     └── phase-ledger.json
 ```
@@ -88,14 +90,17 @@ Rules:
 - Mark non-text records as `[image]`, `[file]`, `[system]`, etc.; do not dump opaque objects.
 - Show a short attachment marker next to the message; link the binary only when it was actually saved.
 - Keep the transcript chronological. Do not merge separate messages into an invented summary.
+- Render epoch timestamps in `Asia/Ho_Chi_Minh` by default; set `ZL_DISPLAY_TIMEZONE` for another reader timezone.
 
 ## Link presentation
 
 `readable/links.md` contains one human-readable card per canonical URL and
-groups cards by category. Each card should show:
+groups cards by category. Use the host/path as the stable heading; put the
+message context in a separate bullet so a mention or a long pasted sentence
+does not become a misleading title. Each card should show:
 
 ```text
-Context title
+01. host/path
 Open link
 Category · confidence · occurrence count
 First/last seen · message/pin source
@@ -107,6 +112,16 @@ truth. Keep long public URLs behind a descriptive link label, while retaining
 the exact URL in `raw/links.csv`. Internal Zalo CDN URLs and signed query
 strings are not reader-facing data: keep only normalized host/status or a
 fingerprint unless the user explicitly asks for the raw token-bearing value.
+
+`readable/pins.md` is a separate pin-first view. It must show the number of
+enumerated pinned records, each record's time/sender/context, external links,
+and internal media references separately. Do not hide pin links inside the
+general link count. The index must show the message scope, user-facing unique
+links, all exact URLs, message/pin/media occurrence counts, pinned-record
+count, Link-archive status/count when available, and pin-audit status.
+If the export starts at a date boundary, make that boundary visible so a
+reader does not compare a partial-period export with Zalo's all-history link
+counter.
 
 `readable/links.csv` and `readable/links-by-category/<category>.csv` are
 intentionally narrow five-column reading tables: `sequence`, `category`,

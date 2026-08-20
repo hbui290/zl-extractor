@@ -34,6 +34,8 @@ assert.match(delta, /repeated_cursor/, "delta fetch must guard cursor loops");
 assert.match(delta, /completed/, "delta fetch must accept a short final page");
 assert.match(delta, /quote_text/, "delta fetch must preserve quote context");
 assert.match(delta, /attachment_name/, "delta fetch must preserve attachment metadata");
+assert.match(delta, /structured_links/, "delta fetch must preserve URLs from structured message fields");
+assert.match(delta, /bareTlds/, "delta fetch must recognize conservative bare domains");
 
 const candidateDir = fs.mkdtempSync(path.join(os.tmpdir(), "zl-candidates-"));
 const candidatePath = path.join(candidateDir, "media-candidates.jsonl");

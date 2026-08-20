@@ -66,6 +66,7 @@ def main():
     primary_path = messages / "links.csv"
     media_path = occurrence_root / "zalo-media-links.csv"
     manifest_path = reports / "manifest.json"
+    link_archive_path = reports / "link-archive-audit.json"
     classification_report_path = reports / "link-classification.json"
     run_plan_file = plan_path(root)
     checkpoint_file = checkpoint_path(root)
@@ -81,6 +82,14 @@ def main():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     else:
         manifest = {}
+    if link_archive_path.exists():
+        try:
+            link_archive = json.loads(link_archive_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            failures.append("link archive audit file is not valid JSON")
+            link_archive = {}
+    else:
+        link_archive = {}
     if manifest.get("sourceWriteIssued") is True:
         failures.append("manifest says sourceWriteIssued=true")
     if not raw_path.exists():
@@ -230,6 +239,15 @@ def main():
     if manifest.get("exportStatus") == "COMPLETE" and warnings:
         failures.append("manifest claims COMPLETE while audit has warnings")
 
+    archive_reported = link_archive.get("reportedLinkCount")
+    archive_enumerated = link_archive.get("enumeratedLinkCount")
+    if archive_reported is not None and archive_enumerated is not None and archive_reported != archive_enumerated:
+        failures.append("Zalo Link archive reported count does not match enumerated rows")
+    if link_archive and str(link_archive.get("status", "")).lower() not in {"complete", "verified"}:
+        warnings.append("Zalo Link archive count is observed but not reconciled to exported rows")
+    if not link_archive:
+        warnings.append("Zalo Link archive was not enumerated; message/pin ledgers alone do not prove archive coverage")
+
     result = {
         "status": "PASS" if not failures and not warnings else ("PARTIAL" if not failures else "FAIL"),
         "export_root": str(root),
@@ -256,6 +274,9 @@ def main():
         "item_checkpoint_status": "PASS" if checkpoint_file.exists() and not checkpoint_issues else ("MISSING" if not checkpoint_file.exists() else "FAIL"),
         "pin_audit_status": pin_audit_status,
         "pin_audit_completeness": pin_audit_completeness,
+        "link_archive_status": link_archive.get("status", "unknown"),
+        "link_archive_reported_count": archive_reported,
+        "link_archive_enumerated_count": archive_enumerated,
         "failures": failures,
         "warnings": warnings,
     }

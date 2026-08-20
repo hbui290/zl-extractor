@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from export_paths import assert_source_read_only, export_paths, safe_category_slug
+from url_rules import parseable_url
 
 
 FIELDS = [
@@ -50,7 +51,7 @@ def is_google_flow_path(path):
 
 def parsed(url):
     try:
-        value = urlsplit(url.strip())
+        value = urlsplit(parseable_url(url))
         return (value.hostname or "").lower(), value.path.lower(), value.fragment.lower()
     except ValueError:
         return "", "", ""

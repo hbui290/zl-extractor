@@ -172,6 +172,34 @@ try {
       for (const [childKey, child] of Object.entries(value)) collect(child, childKey, depth + 1, seen, urls);
       return urls;
     };
+    const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'pro', 'site', 'tech', 'tv', 'video', 'vn', 'xin', 'xyz']);
+    const trimToken = (value) => String(value || '').trim().replace(/[.,;:!?]+$/, '').replace(/[)\]}]+$/, '');
+    const isBareUrl = (value) => {
+      const text = trimToken(value);
+      if (!text || /^https?:\/\//i.test(text)) return false;
+      const host = text.split(/[/?#]/, 1)[0].toLowerCase().replace(/^www\./, '');
+      const labels = host.split('.');
+      return labels.length >= 2 && bareTlds.has(labels.at(-1)) && /[a-z]/i.test(labels[0]);
+    };
+    const collectPublicUrls = (value, depth = 0, seen = new WeakSet(), urls = []) => {
+      if (depth > 8 || value == null || urls.length >= 200) return urls;
+      if (typeof value === 'string') {
+        const explicit = [];
+        for (const match of value.matchAll(/https?:\/\/[^\s<>"'\x60]+/gi)) {
+          const url = trimToken(match[0]);
+          if (url) { urls.push(url); explicit.push(match.index); }
+        }
+        for (const match of value.matchAll(/(?<![@\w])(?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"'\x60)\]]*)?/gi)) {
+          const url = trimToken(match[0]);
+          if (url && isBareUrl(url) && !explicit.some((start) => start <= match.index && match.index < start + url.length)) urls.push(url);
+        }
+        return urls;
+      }
+      if (typeof value !== 'object' || seen.has(value)) return urls;
+      seen.add(value);
+      for (const child of Object.values(value)) collectPublicUrls(child, depth + 1, seen, urls);
+      return urls;
+    };
     const collectText = (value, depth = 0, seen = new WeakSet()) => {
       if (depth > 3 || value == null) return '';
       if (typeof value === 'string') return value;
@@ -205,6 +233,9 @@ try {
       const senderId = String(scalar(row.senderId, row.fromId, row.sender?.id));
       const attachmentName = stringValue(row.fileName, row.file_name, row.attachmentName, row.attachment?.name, row.file?.name);
       const attachmentMime = stringValue(row.mimeType, row.mime_type, row.contentType, row.attachment?.mimeType, row.file?.mimeType);
+      const textParts = [row.text, row.message, row.content].map((value) => collectText(value)).filter(Boolean);
+      const text = [...new Set(textParts)].join('\n');
+      const structuredLinks = [...new Set(collectPublicUrls({ text: row.text, message: row.message, content: row.content, extra: row.extra, ev: row.ev, paramsExt: row.paramsExt, properties: row.properties }))].filter((url) => !isMediaUrl(url));
       return {
         timestamp: String(scalar(row.sendDttm, row.timestamp, row.sendTime)),
         message_id: messageId,
@@ -214,9 +245,10 @@ try {
         sender_id: senderId,
         msg_type: String(scalar(row.msgType, row.messageType, row.type)),
         origin_msg_type: String(row.originMsgType || ''),
-        text: collectText(row.text || row.message || row.content || ''),
-        quote_text: stringValue(row.quoteText, row.quote_text, row.quote?.text),
-        reference_text: stringValue(row.referenceText, row.reference_text, row.reference?.text),
+        text,
+        quote_text: collectText(row.quoteText || row.quote_text || row.quote),
+        reference_text: collectText(row.referenceText || row.reference_text || row.reference),
+        structured_links: structuredLinks.join('\n'),
         attachment_name: attachmentName,
         media: ranked.map((candidate, index) => ({
           msgId: messageId,
@@ -293,12 +325,13 @@ const normalizedRows = (data.rows || []).map((row) => ({
   text: redactMediaQuery(row.text),
   quote_text: redactMediaQuery(row.quote_text),
   reference_text: redactMediaQuery(row.reference_text),
+  structured_links: redactMediaQuery(row.structured_links),
   attachment_name: redactMediaQuery(row.attachment_name),
 })).filter((row) => row.message_id && inRange(row));
 const uniqueRows = new Map();
 for (const row of normalizedRows) if (!uniqueRows.has(row.message_id)) uniqueRows.set(row.message_id, row);
 const rows = [...uniqueRows.values()].sort(compareRows);
-const csvFields = ["timestamp", "message_id", "conversation_id", "conversation_name", "sender", "sender_id", "msg_type", "origin_msg_type", "text", "quote_text", "reference_text", "attachment_name"];
+const csvFields = ["timestamp", "message_id", "conversation_id", "conversation_name", "sender", "sender_id", "msg_type", "origin_msg_type", "text", "quote_text", "reference_text", "structured_links", "attachment_name"];
 const csvEscape = (value) => {
   const text = String(value ?? "");
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;

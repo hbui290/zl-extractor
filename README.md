@@ -14,7 +14,8 @@ find later. ZL Extractor turns that noise into a practical archive:
 - Keep the full conversation in readable Markdown, with CSV tables for links,
   attachments, and review work.
 - Open a human-first Markdown view grouped by day and sender.
-- Find and organize links shared in messages and pinned content.
+- Find and organize links shared in messages and pinned content, while keeping
+  Zalo's separate conversation-info Link archive as its own coverage check.
 - Merge repeated shares into a clear link list while keeping the context.
 - Export images and files when you need them.
 - Skip GIFs and stickers by default so the archive stays useful.
@@ -106,9 +107,10 @@ available without cluttering the reading experience.
 ## Honest results
 
 Zalo may keep some content behind its live app or may not expose every pinned
-item or media file. ZL Extractor reports those limits instead of pretending the
-archive is complete. Readable messages and metadata remain available even when
-some optional content needs review.
+item, Link-archive card, or media file. ZL Extractor reports those limits
+instead of pretending the archive is complete. Message links, pinned links,
+and Link-archive links are separate sources; a visible Zalo counter is recorded
+as evidence until the cards are enumerated and reconciled.
 
 ## Technical documentation
 

@@ -20,6 +20,7 @@ Verify all applicable invariants:
 - Every canonical row retains all related message IDs, pin IDs, timestamps, sources, and context evidence.
 - Internal media URLs do not leak into user-facing links.
 - Pin status, completeness, enumerated count, and end condition are recorded independently.
+- When available, `source/link-archive-audit.json` records the Zalo Link-tab count, enumerated rows, status, and end condition; a missing or unreconciled archive audit keeps the export `PARTIAL`.
 - Message IDs are unique or duplicate/update events are explained; counts match the selected snapshot.
 - CSV files round-trip with Unicode, commas, quotes, and embedded newlines intact.
 - Output paths stay inside the export; copied/downloaded binaries are non-empty and hash-match.
@@ -126,6 +127,7 @@ Text / attachment scope:
 Links: raw / exact-unique / user-facing / media
 Review: unresolved / resolved
 Pin audit: status / completeness / enumerated count
+Link archive: observed / enumerated / reconciled count
 Validation: PASS | PARTIAL | FAIL + warnings/failures
 Source changed: no | unknown
 Cleanup: temporary tools removed; debug port closed

@@ -53,7 +53,10 @@ runtime reads and media retrieval. Keep one runtime session and one normalized
 message snapshot per run. Keep the user's scope in a machine-readable run plan;
 the AI must not infer extra phases after the run starts. Do not write a new
 inline extractor for each group.
-Use the bundled version-sensitive adapters under `RUNTIME_ROOT`. If the
+Use the bundled version-sensitive adapters under `RUNTIME_ROOT`. The snapshot
+and delta adapters preserve URLs found in alternate structured message fields
+under the normalized `structured_links` column; the post-processor consumes
+that column without duplicating URLs already present in message text. If the
 required adapter is unavailable or its module contract no longer matches the
 installed Zalo build, stop with `BLOCKED` and report that exact gap instead of
 starting an unbounded ad-hoc scrape.
@@ -259,6 +262,8 @@ Guard against a repeated cursor and cap pages. Normalize only the fields needed
 for output (`conversation_id`, message ID, timestamps, sender, type, text,
 quote/reference, and attachment metadata), then sort oldest-to-newest by
 `sendDttm`, `msgId`. Message-text links are incomplete until the pin audit runs.
+Recognize explicit `http(s)://` URLs and conservative bare domains; keep
+ambiguous domain-like prose in the review queue instead of guessing.
 Use one runtime call per page, not one CDP evaluation per message. Record the
 page cursor and input hash as one checkpoint item, persist the normalized page
 before requesting the next page, and never fetch a completed page again.
@@ -297,6 +302,13 @@ mv "$TEMP_ROOT/pins.csv" "$OUTPUT_ROOT/raw/pins.csv"
 If the app's pin service cannot resolve the exact conversation or does not
 return an array from the bounded read-only call, record `BLOCKED`/`PARTIAL` and
 do not claim pin completeness.
+
+The conversation-info `Link` tab is a separate source from both the message
+snapshot and the pinned-message panel. When the current runtime exposes it,
+enumerate it into `source/link-archive-audit.json` with the reported UI count,
+enumerated row count, and an explicit end condition. If it is unavailable,
+keep the export `PARTIAL` and show that gap in `readable/index.md`; never use
+the message/pin totals as a substitute for the Link-tab count.
 
 Build the occurrence ledger and exact-URL merge before applying category rules:
 
@@ -365,9 +377,13 @@ Generate the human views after the normalized message/link/media files exist:
 python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-`readable/messages.md` is chronological and grouped by local date. `links.md`
-and `links-by-category/` show context, category, confidence, occurrences, and
-clickable labels. `readable/links.csv` and the category CSVs are intentionally
+`readable/messages.md` is chronological and grouped by local date. `links.md`,
+`pins.md`, and `links-by-category/` show stable URL headings, context, category,
+confidence, occurrences, and clickable labels. `pins.md` is the separate
+reader-facing pin audit; external links and internal media references are shown
+separately and must not be hidden inside the general link count.
+`readable/links.csv`
+and the category CSVs are intentionally
 narrow, five-column, one-row-per-canonical-URL reading tables: category,
 context, URL, and occurrence count. `media.csv` has five columns and
 `review.csv` has six; both use the same compact-reader principle. Keep confidence, IDs,
