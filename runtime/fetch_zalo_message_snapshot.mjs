@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isAllowedMediaUrl } from "./media_candidates.mjs";
+import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const required = (name) => {
   const value = String(process.env[name] || "").trim();
@@ -11,7 +12,8 @@ const required = (name) => {
 const port = Number(required("ZALO_CDP_PORT"));
 if (!Number.isInteger(port) || port <= 0) throw new Error("invalid ZALO_CDP_PORT");
 const outputRoot = path.resolve(required("OUTPUT_ROOT"));
-const groupName = required("ZALO_GROUP_NAME").normalize("NFC").toLocaleLowerCase();
+const requestedGroupName = required("ZALO_GROUP_NAME").normalize("NFC");
+const groupName = requestedGroupName.toLocaleLowerCase();
 const accountId = required("ZALO_ACCOUNT_ID");
 const messagesPath = path.resolve(required("MESSAGES_PATH"));
 const candidatePath = process.env.MEDIA_CANDIDATES_PATH
@@ -115,9 +117,7 @@ const redactMediaQuery = (value) => String(value || "").replace(/https?:\/\/[^\s
   return token;
 });
 
-const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = targets.find((item) => item.type === "page" && item.title === "Zalo");
-if (!page) throw new Error("Zalo renderer not found");
+const page = await waitForZaloPage(port);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 let requestId = 0;
 const pending = new Map();
@@ -317,8 +317,38 @@ const mediaCandidateCount = candidatePath
   ? (data.media || []).filter((row) => exportedMessageIds.has(String(row.msgId)) && isAllowedMediaUrl(row.url)).length
   : 0;
 
+const manifestPath = path.join(outputRoot, "source", "manifest.json");
+let manifest = {};
+if (fs.existsSync(manifestPath)) {
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(`invalid manifest: ${error.message}`);
+  }
+}
+if (manifest.sourceWriteIssued === true) throw new Error("source_write_guard: manifest says sourceWriteIssued=true");
+manifest.schema_version = manifest.schema_version || 1;
+manifest.exportStatus = manifest.exportStatus || "PARTIAL";
+manifest.sourceWriteIssued = false;
+manifest.source = {
+  ...(manifest.source || {}),
+  kind: "zalo_logged_in_runtime",
+  readOnly: true,
+  accountId,
+  conversationId: String(data.conversationId || ""),
+  conversationName: requestedGroupName,
+  startAt: process.env.START_AT || "",
+  endAt: process.env.END_AT || "",
+};
+manifest.counts = {
+  ...(manifest.counts || {}),
+  snapshotRecords: rows.length,
+  exportedMessages: rows.length,
+};
+atomicWrite(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
 console.log(JSON.stringify({
-  groupName,
+  groupName: requestedGroupName,
   conversationId: data.conversationId,
   pages: data.pages,
   scannedMessages: data.scannedMessages,

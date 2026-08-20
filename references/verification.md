@@ -59,7 +59,9 @@ node runtime/test_runtime_optimizations.mjs
 node runtime/test_full_snapshot_contracts.mjs
 node runtime/test_pin_contracts.mjs
 node runtime/test_media_contracts.mjs
+node runtime/test_zalo_cdp_contracts.mjs
 swiftc -typecheck runtime/ocr_zalo_media.swift
+node --check runtime/zalo_cdp.mjs
 node --check runtime/fetch_zalo_message_snapshot.mjs
 node --check runtime/fetch_zalo_pins.mjs
 node --check runtime/fetch_zalo_media.mjs

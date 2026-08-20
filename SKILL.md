@@ -34,6 +34,7 @@ GROUP_NAME      = exact requested conversation display name
 CONVERSATION_ID = runtime-resolved stable conversation ID
 ZALO_APP_PATH   = discovered Zalo.app bundle containing app.asar
 CDP_PORT        = free loopback port selected for this run
+ZALO_READY_TIMEOUT_MS = bounded wait for the logged-in renderer (default 30000)
 OUTPUT_ROOT     = absolute output directory
 TEMP_ROOT       = fresh temporary directory
 START_AT        = optional lower message boundary (ISO-8601, YYYY-MM-DD, or epoch)
@@ -96,11 +97,15 @@ Record `SKIPPED` for `pins` when links/pins are outside scope, and for
 `PARTIAL` or `BLOCKED` when a phase ends that way; never mark it complete by
 guessing. `validate` is required before closeout.
 
-Preflight once, before the full snapshot: verify the Zalo page, read-only
-adapter, active account, exact conversation, pin adapter/end-marker, output
-root, and media field shape. Do not inspect the app bundle, invent a new inline extractor, or
-rerun exploratory pin calls after the full snapshot has started. If preflight
-fails, stop `BLOCKED` instead of spending time on a doomed run.
+Preflight once, before the full snapshot: use the bundled CDP readiness helper
+to poll `/json/list` until the page title is exactly `Zalo` (default timeout is
+30 seconds; override with bounded `ZALO_READY_TIMEOUT_MS`). A login/loading
+page is not ready. Then verify the read-only adapter, active account, exact
+conversation, pin adapter/end-marker, output root, and media field shape. Do
+not inspect the app bundle, invent a new inline extractor, or rerun exploratory
+pin calls after the full snapshot has started. If the renderer remains on the
+login/loading page or any preflight check fails, stop `BLOCKED` instead of
+spending time on a doomed run.
 
 Use these defaults unless a measured 20-item media dry-run proves the renderer
 requires a safer limit:
@@ -227,6 +232,11 @@ MEDIA_CANDIDATES_PATH="$TEMP_ROOT/media-candidates.jsonl" \
 node "$RUNTIME_ROOT/fetch_zalo_message_snapshot.mjs"
 ```
 
+The snapshot adapter initializes `source/manifest.json` with the verified
+conversation, read-only source metadata, message counts, and
+`sourceWriteIssued: false`; later link/pin stages extend that manifest instead
+of silently omitting it.
+
 `START_AT`/`END_AT` are inclusive. A date-only `START_AT` means local midnight;
 a date-only `END_AT` means the end of that local day. Numeric epoch seconds and
 milliseconds are accepted. The adapter refuses ambiguous group names, missing
@@ -309,6 +319,7 @@ python3 -B scripts/test_extract_links.py
 node runtime/test_full_snapshot_contracts.mjs
 node runtime/test_pin_contracts.mjs
 node runtime/test_media_contracts.mjs
+node runtime/test_zalo_cdp_contracts.mjs
 ```
 
 For each export, run only the data-dependent pipeline after the runtime

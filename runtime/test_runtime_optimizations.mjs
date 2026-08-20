@@ -16,6 +16,7 @@ assert.doesNotMatch(media, /tempManifestPath/, "media manifest should not be rew
 assert.match(media, /MEDIA_PROGRESS_MS/, "media progress should be throttled");
 assert.match(media, /MEDIA_CANDIDATES_PATH/, "media fetch should accept the shared candidate snapshot");
 assert.match(media, /loadMediaCandidates/, "media fetch should load candidates without rescanning messages");
+assert.match(media, /waitForZaloPage/, "media fetch should wait for a ready renderer");
 assert.match(media, /candidateSource/, "media fetch should report the candidate source");
 assert.match(media, /missing MEDIA_CANDIDATES_PATH/, "media fetch must require the shared candidate snapshot");
 assert.doesNotMatch(media, /loadMessagesForBackup/, "media fetch must not rescan message history");
@@ -25,6 +26,7 @@ assert.match(media, /missing OUTPUT_ROOT/, "media fetch must not write to a host
 assert.match(delta, /INCREMENTAL_STATE_PATH/, "delta fetch must consume the saved state");
 assert.match(delta, /MESSAGES_DELTA_PATH/, "delta fetch must write a normalized delta");
 assert.match(delta, /loadMessagesForBackup/, "delta fetch must use the logged-in runtime");
+assert.match(delta, /waitForZaloPage/, "delta fetch must wait for a ready renderer");
 assert.match(delta, /watermark/, "delta fetch must stop at the saved watermark");
 assert.match(delta, /reachedWatermark/, "delta fetch should detect the watermark while reading the current batch");
 assert.doesNotMatch(delta, /rows\.some\(/, "delta fetch must not rescan all accumulated rows after every page");

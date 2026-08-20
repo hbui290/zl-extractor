@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadMediaCandidates } from "./media_candidates.mjs";
+import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const port = Number(process.env.ZALO_CDP_PORT || 0);
 const outputRootValue = String(process.env.OUTPUT_ROOT || "").trim();
@@ -28,9 +29,7 @@ if (!mediaCandidatesPath) {
 }
 const data = loadMediaCandidates(mediaCandidatesPath);
 
-const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = targets.find((item) => item.type === "page" && item.title === "Zalo");
-if (!page) throw new Error("Zalo renderer not found");
+const page = await waitForZaloPage(port);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 let requestId = 0;
 const pending = new Map();

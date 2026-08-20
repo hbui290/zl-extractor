@@ -22,5 +22,8 @@ assert.match(source, /invalid MAX_MESSAGE_PAGES|positiveInteger/, "snapshot must
 assert.match(source, /MEDIA_CANDIDATES_PATH must stay outside OUTPUT_ROOT/, "candidate staging must stay outside the export");
 assert.match(source, /time === null/, "invalid timestamps must not stop pagination");
 assert.match(source, /atomicWrite/, "snapshot output must be atomic");
+assert.match(source, /waitForZaloPage/, "snapshot must wait for a ready renderer");
+assert.match(source, /manifest\.json/, "snapshot must initialize the export manifest");
+assert.match(source, /sourceWriteIssued = false/, "snapshot must preserve the source-write guard");
 
 console.log("full_snapshot_contracts=PASS");

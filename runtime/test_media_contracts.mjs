@@ -16,6 +16,7 @@ assert.match(source, /raw.*attachments\.csv/, "media metadata must be exported")
 assert.match(source, /skipped_by_policy/, "GIF/sticker policy must be explicit");
 assert.match(source, /sha256/, "downloaded media must be hashed");
 assert.match(source, /loadMediaCandidates/, "media must reuse candidates");
+assert.match(source, /waitForZaloPage/, "media must wait for a ready renderer");
 assert.doesNotMatch(source, /loadMessagesForBackup/, "media must not rescan message history");
 assert.match(source, /AbortSignal\.timeout/, "media requests need a deadline");
 assert.match(source, /mediaConcurrency/, "media concurrency must be bounded");

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const required = (name) => {
   const value = String(process.env[name] || "").trim();
@@ -17,9 +18,9 @@ const maxPinsValue = String(process.env.MAX_PIN_ROWS || "").trim();
 const maxPins = maxPinsValue ? Number(maxPinsValue) : 1000;
 if (!Number.isSafeInteger(maxPins) || maxPins < 1 || maxPins > 10000) throw new Error("invalid MAX_PIN_ROWS");
 
-const rawRelativePins = path.relative(path.join(outputRoot, "raw"), pinsPath);
-if (rawRelativePins === "" || rawRelativePins.startsWith("..") || path.isAbsolute(rawRelativePins)) {
-  throw new Error("PINS_PATH must stay under OUTPUT_ROOT/raw");
+const outputRelativePins = path.relative(outputRoot, pinsPath);
+if (outputRelativePins === "" || (!outputRelativePins.startsWith("..") && !path.isAbsolute(outputRelativePins))) {
+  throw new Error("PINS_PATH must stay outside OUTPUT_ROOT until it is moved into raw");
 }
 if (auditPath) {
   const relativeAudit = path.relative(path.join(outputRoot, "source"), auditPath);
@@ -39,9 +40,7 @@ const atomicWrite = (filePath, content) => {
   }
 };
 
-const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = targets.find((item) => item.type === "page" && item.title === "Zalo");
-if (!page) throw new Error("Zalo renderer not found");
+const page = await waitForZaloPage(port);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 let requestId = 0;
 const pending = new Map();

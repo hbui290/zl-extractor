@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isAllowedMediaUrl } from "./media_candidates.mjs";
+import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const required = (name) => {
   const value = String(process.env[name] || "").trim();
@@ -86,9 +87,7 @@ const redactMediaQuery = (value) => String(value || "").replace(/https?:\/\/[^\s
   return token;
 });
 
-const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-const page = targets.find((item) => item.type === "page" && item.title === "Zalo");
-if (!page) throw new Error("Zalo renderer not found");
+const page = await waitForZaloPage(port);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 let requestId = 0;
 const pending = new Map();
