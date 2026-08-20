@@ -36,11 +36,10 @@ workflow records each phase in `source/phase-ledger.json`, reuses one message
 snapshot for links and media candidates, and resumes later runs from saved
 watermarks/checkpoints.
 
-As a local smoke benchmark, link extraction, categorization, review-file
-generation, readable rendering, and auditing took a median **0.457 seconds**
-over 3 runs on a 5,058-message / 12-pin snapshot. This does not measure live
-Zalo paging, network downloads, or OCR; those remain dependent on the current
-Zalo session and requested media scope.
+Local post-processing is kept lightweight and phase timings are recorded so a
+slow run can be traced to the runtime, downloads, OCR, or rendering. Live
+performance remains dependent on the current Zalo session, network conditions,
+history size, and requested media scope.
 
 ## Quick start
 
