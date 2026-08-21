@@ -28,10 +28,10 @@ def main():
             "conversationName": "Compact fixture",
             "exportStatus": "PARTIAL",
         }), encoding="utf-8")
-        write_csv(root / "raw/messages.csv", ["timestamp", "sender", "text"], [
+        write_csv(root / "source/raw/messages.csv", ["timestamp", "sender", "text"], [
             {"timestamp": "2026-07-16 10:00", "sender": "A", "text": "Hello"},
         ])
-        write_csv(root / "raw/links.csv", [
+        write_csv(root / "source/raw/links.csv", [
             "sequence", "category", "url", "occurrence_count", "first_seen", "last_seen",
             "sources", "confidence", "context_alternatives",
         ], [{
@@ -39,8 +39,8 @@ def main():
             "occurrence_count": "1", "first_seen": "2026-07-16 10:00", "last_seen": "2026-07-16 10:00",
             "sources": "message", "confidence": "high", "context_alternatives": "",
         }])
-        write_csv(root / "raw/links-occurrences.csv", ["url"], [{"url": "https://example.com/tool"}])
-        write_csv(root / "raw/pins.csv", ["timestamp", "sender", "title", "text", "urls"], [])
+        write_csv(root / "source/raw/links-occurrences.csv", ["url"], [{"url": "https://example.com/tool"}])
+        write_csv(root / "source/raw/pins.csv", ["timestamp", "sender", "title", "text", "urls"], [])
 
         build(root)
         generated = {

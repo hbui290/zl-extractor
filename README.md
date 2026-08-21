@@ -89,9 +89,13 @@ Host-specific discovery and import rules can change; use the official guides:
 ```text
 group-export/
 ├── readable/          Markdown reading views + curated CSV tables
-├── attachments/       images/files when requested
-├── raw/               machine-readable CSV/JSON for audit; signed media redacted
-└── source/            manifest, run plan, checkpoints, provenance, and timings
+└── source/
+    ├── attachments/   images/files when requested
+    ├── raw/           machine-readable CSV/JSON for audit; signed media redacted
+    ├── manifest.json
+    ├── run-plan.json
+    ├── phase-ledger.json
+    └── checkpoints/provenance/timings
 ```
 
 The result is designed to be portable: open `readable/index.md`, search the

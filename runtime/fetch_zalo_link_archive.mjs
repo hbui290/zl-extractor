@@ -19,7 +19,7 @@ const reportedCardCount = String(process.env.ZALO_REPORTED_LINK_COUNT || "").tri
 const expectedCards = reportedCardCount === "" ? null : Number(reportedCardCount);
 if (expectedCards !== null && (!Number.isInteger(expectedCards) || expectedCards < 0)) throw new Error("invalid ZALO_REPORTED_LINK_COUNT");
 if (!fs.existsSync(outputRoot) || fs.lstatSync(outputRoot).isSymbolicLink()) throw new Error("OUTPUT_ROOT must exist and must not be a symlink");
-for (const [target, base, label] of [[archivePath, path.join(outputRoot, "raw"), "LINK_ARCHIVE_PATH"], [auditPath, path.join(outputRoot, "source"), "LINK_ARCHIVE_AUDIT_PATH"]]) {
+for (const [target, base, label] of [[archivePath, path.join(outputRoot, "source", "raw"), "LINK_ARCHIVE_PATH"], [auditPath, path.join(outputRoot, "source"), "LINK_ARCHIVE_AUDIT_PATH"]]) {
   if (!fs.existsSync(base) || fs.lstatSync(base).isSymbolicLink() || path.dirname(target) !== base) throw new Error(`${label} must be a direct file under a non-symlink ${path.basename(base)}/`);
 }
 const manifestPath = path.join(outputRoot, "source", "manifest.json");

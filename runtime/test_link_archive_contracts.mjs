@@ -30,7 +30,7 @@ assert.deepEqual(rows, [
 ]);
 
 const adapter = fs.readFileSync(new URL("./fetch_zalo_link_archive.mjs", import.meta.url), "utf8");
-assert.match(adapter, /archivePath, path\.join\(outputRoot, "raw"\), "LINK_ARCHIVE_PATH"/, "archive rows must stay under raw/");
+assert.match(adapter, /archivePath, path\.join\(outputRoot, "source", "raw"\), "LINK_ARCHIVE_PATH"/, "archive rows must stay under source/raw/");
 assert.match(adapter, /auditPath, path\.join\(outputRoot, "source"\), "LINK_ARCHIVE_AUDIT_PATH"/, "archive audit must stay under source/");
 assert.match(adapter, /stable < 4/, "archive enumeration must reach a stable UI end");
 assert.match(adapter, /rawCardCount/, "archive enumeration must reject duplicate or foreign cards");

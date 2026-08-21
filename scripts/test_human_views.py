@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from export_paths import assert_source_read_only, contained_attachment, safe_category_slug  # noqa: E402
-from render_human_views import build, copy_legacy_input, link_card, read_csv, render_media, write_table_csv  # noqa: E402
+from render_human_views import build, copy_legacy_input, link_card, link_family_key, read_csv, render_media, write_table_csv  # noqa: E402
 
 
 def write_csv(path, fields, rows):
@@ -29,6 +29,52 @@ def digest_tree(root):
         if path.is_file():
             result[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
+
+
+def test_readable_link_order():
+    fields = [
+        "sequence", "category", "url", "canonical_url", "occurrence_count", "first_seen",
+        "last_seen", "confidence",
+    ]
+    rows = [
+        {"sequence": "000001", "category": "other", "url": "https://a.example/other", "first_seen": "2026-07-10 10:00"},
+        {"sequence": "000002", "category": "social-community", "url": "https://b.example/social", "first_seen": "2026-07-09 10:00"},
+        {"sequence": "000003", "category": "tool-platform", "url": "https://c.example/tool", "first_seen": "2026-07-08 10:00"},
+        {"sequence": "000004", "category": "training-guide", "url": "https://docs.google.com/document/late", "first_seen": "2026-07-12 10:00"},
+        {"sequence": "000005", "category": "training-guide", "url": "https://docs.google.com/document/early", "first_seen": "2026-07-11 10:00"},
+        {"sequence": "000006", "category": "training-guide", "url": "https://www.youtube.com/watch?v=video", "first_seen": "2026-07-10 10:00"},
+        {"sequence": "000007", "category": "shopee-affiliate", "url": "https://f.example/shopee", "first_seen": "2026-07-13 10:00"},
+        {"sequence": "000008", "category": "tool-platform", "url": "https://vmedia.vn/tool", "first_seen": "2026-07-09 10:00"},
+        {"sequence": "000009", "category": "other", "url": "https://vmedia.ai/tool", "first_seen": "2026-07-10 10:00"},
+    ]
+    for row in rows:
+        row.update({"canonical_url": row["url"], "occurrence_count": "1", "last_seen": row["first_seen"], "confidence": "high"})
+
+    with tempfile.TemporaryDirectory(prefix="zl-link-order-") as temp:
+        root = Path(temp)
+        write_csv(root / "source/raw/links.csv", fields, rows)
+        (root / "source/manifest.json").parent.mkdir(parents=True, exist_ok=True)
+        (root / "source/manifest.json").write_text(
+            json.dumps({"conversationName": "Link order", "sourceWriteIssued": False}),
+            encoding="utf-8",
+        )
+        build(root)
+        with (root / "readable/links.csv").open(newline="", encoding="utf-8") as handle:
+            rendered = list(csv.DictReader(handle))
+        vmedia = [row for row in rendered if "vmedia." in row["url"]]
+        assert [row["url"] for row in vmedia] == [
+            "https://vmedia.vn/tool", "https://vmedia.ai/tool",
+        ]
+        vmedia_positions = [rendered.index(row) for row in vmedia]
+        assert vmedia_positions == list(range(min(vmedia_positions), max(vmedia_positions) + 1))
+        docs = [row for row in rendered if "docs.google.com" in row["url"]]
+        assert [row["url"] for row in docs] == [
+            "https://docs.google.com/document/early", "https://docs.google.com/document/late",
+        ]
+        assert [row["sequence"] for row in rendered] == [f"{index:06d}" for index in range(1, 10)]
+        assert link_family_key({"url": "https://youtu.be/example"}) == "youtube"
+        assert link_family_key({"url": "https://www.youtube.com/watch?v=example"}) == "youtube"
+        assert link_family_key({"url": "https://vmedia.vn/tool"}) == link_family_key({"url": "https://vmedia.ai/tool"})
 
 
 def main():
@@ -169,6 +215,7 @@ def main():
             pass
         else:
             raise AssertionError("source write guard did not reject sourceWriteIssued=true")
+    test_readable_link_order()
     print("human_view_tests=PASS")
 
 

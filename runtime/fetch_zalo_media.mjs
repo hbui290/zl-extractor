@@ -28,11 +28,11 @@ const mediaConcurrency = concurrencyValue;
 const mediaTimeoutMs = timeoutValue;
 const data = loadMediaCandidates(candidatesPath);
 const outputDirectories = {
-  image: "attachments/images",
-  video: "attachments/videos",
-  audio: "attachments/audio",
-  file: "attachments/files",
-  other: "attachments/other",
+  image: "source/attachments/images",
+  video: "source/attachments/videos",
+  audio: "source/attachments/audio",
+  file: "source/attachments/files",
+  other: "source/attachments/other",
 };
 for (const directory of Object.values(outputDirectories)) fs.mkdirSync(path.join(outputRoot, directory), { recursive: true });
 const temporaryDirectory = path.join(outputRoot, ".media-tmp");
@@ -213,7 +213,7 @@ const worker = async () => {
 await Promise.all(Array.from({ length: Math.min(mediaConcurrency, entries.length) }, worker));
 const rows = results.filter(Boolean);
 rows.forEach((row, index) => { row.sequence = String(index + 1).padStart(6, "0"); });
-const attachmentsPath = path.join(outputRoot, "raw", "attachments.csv");
+const attachmentsPath = path.join(outputRoot, "source", "raw", "attachments.csv");
 fs.mkdirSync(path.dirname(attachmentsPath), { recursive: true });
 atomicWrite(attachmentsPath, [csvFields.join(","), ...rows.map((row) => csvFields.map((field) => csvEscape(row[field])).join(","))].join("\n") + "\n");
 const status = Object.fromEntries([...new Set(rows.map((row) => row.status))].map((key) => [key, rows.filter((row) => row.status === key).length]));

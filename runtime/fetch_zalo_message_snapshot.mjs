@@ -32,9 +32,9 @@ const batchSize = positiveInteger("MESSAGE_BATCH_SIZE", 9000, 9000);
 const maxPages = positiveInteger("MAX_MESSAGE_PAGES", 100, 1000);
 const initialCursor = String(process.env.ZALO_START_CURSOR || "9999999999999");
 
-const rawRelativeMessages = path.relative(path.join(outputRoot, "raw"), messagesPath);
+const rawRelativeMessages = path.relative(path.join(outputRoot, "source", "raw"), messagesPath);
 if (rawRelativeMessages === "" || rawRelativeMessages.startsWith("..") || path.isAbsolute(rawRelativeMessages)) {
-  throw new Error("MESSAGES_PATH must stay under OUTPUT_ROOT/raw");
+  throw new Error("MESSAGES_PATH must stay under OUTPUT_ROOT/source/raw");
 }
 if (candidatePath) {
   const relativeCandidate = path.relative(outputRoot, candidatePath);

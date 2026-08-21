@@ -229,7 +229,7 @@ IDs such as `AY7h` are version-dependent. If the tested module is absent, stop
 `BLOCKED`; do not replace it with a new inline extractor.
 
 For a first/full snapshot, write normalized messages directly to the export's
-`raw/` layer and keep authenticated media candidates outside the export:
+`source/raw/` layer and keep authenticated media candidates outside the export:
 
 ```bash
 ZALO_CDP_PORT="$CDP_PORT" \
@@ -237,7 +237,7 @@ ZALO_ACCOUNT_ID="$ZALO_ACCOUNT_ID" \
 ZALO_GROUP_NAME="$GROUP_NAME" \
 OUTPUT_ROOT="$OUTPUT_ROOT" \
 START_AT="${START_AT:-}" END_AT="${END_AT:-}" \
-MESSAGES_PATH="$OUTPUT_ROOT/raw/messages.csv" \
+MESSAGES_PATH="$OUTPUT_ROOT/source/raw/messages.csv" \
 MEDIA_CANDIDATES_PATH="$TEMP_ROOT/media-candidates.jsonl" \
 node "$RUNTIME_ROOT/fetch_zalo_message_snapshot.mjs"
 ```
@@ -305,7 +305,7 @@ Open the exact conversation and its visible pin panel first, then audit it with
 the bundled read-only adapter. The visible panel is used only as a count
 evidence check; the adapter still reads the bounded pin service. It writes a
 temporary normalized pin table and a small audit record; move only the table
-into `raw/`:
+into `source/raw/`:
 
 ```bash
 ZALO_CDP_PORT="$CDP_PORT" \
@@ -314,7 +314,7 @@ OUTPUT_ROOT="$OUTPUT_ROOT" \
 PINS_PATH="$TEMP_ROOT/pins.csv" \
 PIN_AUDIT_PATH="$OUTPUT_ROOT/source/pin-audit.json" \
 node "$RUNTIME_ROOT/fetch_zalo_pins.mjs"
-mv "$TEMP_ROOT/pins.csv" "$OUTPUT_ROOT/raw/pins.csv"
+mv "$TEMP_ROOT/pins.csv" "$OUTPUT_ROOT/source/raw/pins.csv"
 ```
 
 If the app's pin service cannot resolve the exact conversation or does not
@@ -336,7 +336,7 @@ snapshot and the pinned-message panel. Open the exact conversation's full
 ZALO_CDP_PORT="$CDP_PORT" \
 ZALO_GROUP_NAME="$GROUP_NAME" \
 OUTPUT_ROOT="$OUTPUT_ROOT" \
-LINK_ARCHIVE_PATH="$OUTPUT_ROOT/raw/link-archive.csv" \
+LINK_ARCHIVE_PATH="$OUTPUT_ROOT/source/raw/link-archive.csv" \
 LINK_ARCHIVE_AUDIT_PATH="$OUTPUT_ROOT/source/link-archive-audit.json" \
 ZALO_REPORTED_LINK_COUNT="${ZALO_REPORTED_LINK_COUNT:-}" \
 node "$RUNTIME_ROOT/fetch_zalo_link_archive.mjs"
@@ -422,9 +422,10 @@ resolved absolute path, with the readable layer first:
 ```text
 <OUTPUT_ROOT>/<slug>-export-<timestamp>/
   readable/          Markdown reading views + curated CSV tables
-  attachments/       only requested and verified binaries
-  raw/               machine-readable audit inputs; signed media queries redacted
-  source/            manifest, run plan, checkpoints, provenance, and phase timings
+  source/
+    attachments/     only requested and verified binaries
+    raw/              machine-readable audit inputs; signed media queries redacted
+    manifest.json, run plan, checkpoints, provenance, phase timings
 ```
 
 Generate the human views after the normalized message/link/media files exist:
@@ -435,13 +436,18 @@ python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 
 `readable/messages.md` is chronological and grouped by local date. `links.csv`
 is the single compact, one-row-per-canonical-URL reader table with URL,
-category, occurrence count, first-send time, and review status. `pins.md` is
+category, occurrence count, first-send time, and review status. The renderer
+orders `links.csv` by normalized platform/domain/brand family first, then by
+first-send time within that family; category is only a tie-breaker. Equivalent
+`vmedia.vn`/`vmedia.ai`, YouTube/`youtu.be`, Facebook, TikTok, and Telegram
+variants stay adjacent. It then renumbers the displayed STT. The original
+sequence stays in `source/raw/links.csv`. `pins.md` is
 the separate reader-facing pin audit; external links and internal media
 references are shown separately and must not be hidden inside the general link
 count. `media.csv` and `review.csv` are created only when they contain rows.
-Long context and source evidence stay in `raw/` and the optional review table.
+Long context and source evidence stay in `source/raw/` and the optional review table.
 Keep confidence, IDs, classification evidence, hashes, and other provenance in
-the raw layer; never make a reader open raw CSV to understand the conversation.
+the `source/raw/` layer; never make a reader open raw CSV to understand the conversation.
 Do not create XLSX unless formulas, pivots, or a styled workbook are explicitly
 requested. The renderer escapes untrusted message/context Markdown, protects
 formula-like readable CSV cells, preserves external URLs exactly, and redacts

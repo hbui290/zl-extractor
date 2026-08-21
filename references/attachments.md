@@ -44,7 +44,7 @@ not rescan message history.
 The candidate file must be outside `OUTPUT_ROOT`, contain one JSON object per
 line with `msgId`, `sendDttm`, `url`, and `urlKey`, and be deleted after the
 media phase. Its URLs are temporary authenticated data; never copy the file to
-`raw/`, commit it, or print its contents. A missing or invalid path must stop the
+`source/raw/`, commit it, or print its contents. A missing or invalid path must stop the
 run before any history read; it must never trigger a hidden full-history rescan.
 The runtime accepts only the known Zalo media host families; external URLs are
 rejected before any CDP cookie lookup.
@@ -61,13 +61,13 @@ atomically so interruption resumes instead of downloading from zero.
 Write files under:
 
 ```text
-attachments/
+source/attachments/
   images/
   videos/
   audio/
   files/
   other/
-raw/attachments.csv
+source/raw/attachments.csv
 ```
 
 Use a collision-safe name based on message ID and ordinal. Choose the extension

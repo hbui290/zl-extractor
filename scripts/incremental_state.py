@@ -38,11 +38,11 @@ def state_path(root):
 
 def message_path(root):
     root = Path(root).resolve()
-    canonical = root / "raw" / "messages.csv"
-    if canonical.exists():
-        return canonical
+    for canonical in (root / "source" / "raw" / "messages.csv", root / "raw" / "messages.csv"):
+        if canonical.exists():
+            return canonical
     legacy = root / "01-messages" / "messages.csv"
-    return legacy if legacy.exists() else canonical
+    return legacy if legacy.exists() else root / "source" / "raw" / "messages.csv"
 
 
 def _read_table(path):
@@ -240,7 +240,7 @@ def merge_messages(root, delta_path):
     if "sequence" in fields:
         for index, row in enumerate(rows, start=1):
             row["sequence"] = f"{index:06d}"
-    target = root / "raw" / "messages.csv"
+    target = message_path(root)
     _atomic_write_csv(target, fields, rows)
     state = refresh_state(root)
     return {

@@ -2,8 +2,8 @@
 """Build human-readable Markdown views from a ZL Extractor export.
 
 The renderer is non-destructive: it mirrors legacy machine-readable files into
-``raw/`` only when the new raw copy does not already exist, then writes views to
-``readable/``. It never edits the source DB or the legacy export files.
+``source/raw/`` only when the canonical copy does not already exist, then
+writes views to ``readable/``. It never edits the source DB or legacy files.
 """
 
 import argparse
@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from export_paths import (
     assert_source_read_only,
     contained_attachment,
+    export_paths,
     has_signed_internal_media_query,
     is_internal_media_url,
     redact_internal_media_url,
@@ -38,6 +39,16 @@ CATEGORY_LABELS = {
     "social-community": "Social / communities",
     "tracking-redirect": "Tracking / redirects",
     "other": "Other",
+}
+
+# Tie-break links that share a platform family and timestamp.
+CATEGORY_PRIORITY = {
+    "shopee-affiliate": 0,
+    "training-guide": 1,
+    "tool-platform": 2,
+    "social-community": 3,
+    "tracking-redirect": 4,
+    "other": 5,
 }
 
 DISPLAY_TIMEZONE = ZoneInfo(os.environ.get("ZL_DISPLAY_TIMEZONE", "Asia/Ho_Chi_Minh"))
@@ -167,7 +178,8 @@ def sort_key(row):
 
 
 def find_input(root, name, source=False):
-    primary = root / ("source" if source else "raw") / name
+    paths = export_paths(root)
+    primary = (paths["metadata"] if source else paths["machine"]) / name
     if primary.exists():
         return primary
     legacy = root / (SOURCE_MIRRORS if source else RAW_MIRRORS).get(name, "")
@@ -175,8 +187,13 @@ def find_input(root, name, source=False):
 
 
 def mirror_inputs(root):
-    raw_dir = root / "raw"
-    source_dir = root / "source"
+    paths = export_paths(root)
+    if paths["new_layout"]:
+        raw_dir = paths["machine"]
+        source_dir = paths["metadata"]
+    else:
+        raw_dir = root / "raw"
+        source_dir = root / "source"
     raw_dir.mkdir(parents=True, exist_ok=True)
     source_dir.mkdir(parents=True, exist_ok=True)
     mirrored = []
@@ -206,7 +223,7 @@ def mirror_inputs(root):
             json.dumps(
                 {
                     "layout_version": 2,
-                    "raw_policy": "raw files are machine-readable audit inputs; do not edit them",
+                    "raw_policy": "source/raw files are machine-readable audit inputs; do not edit them",
                     "legacy_layout_mirrored": bool(mirrored),
                     "mirrored_files": mirrored,
                 },
@@ -307,14 +324,57 @@ def url_title(row):
         return clean_heading(url, "Link")[:140]
 
 
+def link_family_key(row):
+    """Group equivalent platforms before applying the date sort."""
+    url = pick(row, "url", "canonical_url")
+    try:
+        parsed = urlsplit(parseable_url(url))
+        host = (parsed.hostname or parsed.netloc).lower().removeprefix("www.")
+        path = parsed.path.lower()
+    except ValueError:
+        return url.lower()
+
+    if host in {"youtube.com", "youtu.be"} or host.endswith(".youtube.com"):
+        return "youtube"
+    if host.endswith("facebook.com") or host == "fb.watch":
+        return "facebook"
+    if host.endswith("tiktok.com"):
+        return "tiktok"
+    if host in {"t.me", "telegram.me"} or host.endswith(".telegram.org"):
+        return "telegram"
+    if host == "labs.google" and re.match(r"^/fx/(?:[^/]+/)?tools/flow(?:/|$)", path):
+        return "labs.google/fx/tools/flow"
+    if host == "docs.google.com":
+        return "google/docs"
+    if host == "drive.google.com":
+        return "google/drive"
+    if host == "gemini.google.com":
+        return "google/gemini"
+    if host == "chromewebstore.google.com":
+        return "chrome-web-store"
+    if host == "chatgpt.com":
+        return "chatgpt"
+    if not host:
+        return "unknown"
+    labels = host.split(".")
+    return labels[-2] if len(labels) >= 3 else labels[0]
+
+
 def link_sort_key(row):
+    category = safe_category_slug(pick(row, "category"))
     url = pick(row, "url", "canonical_url")
     try:
         parsed = urlsplit(parseable_url(url))
         label = (parsed.netloc + parsed.path).lower()
     except ValueError:
         label = url.lower()
-    return (label, format_time(pick(row, "first_seen", "timestamp")))
+    return (
+        link_family_key(row),
+        timestamp_sort_key(pick(row, "first_seen", "timestamp")),
+        CATEGORY_PRIORITY.get(category, len(CATEGORY_PRIORITY)),
+        message_id_key(pick(row, "sequence", "message_id", "msg_id", "msgId")),
+        label,
+    )
 
 
 def markdown_table(value):
@@ -592,8 +652,8 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
         "## Storage layers",
         "",
         "- `readable/` — Markdown views for people plus curated CSV tables for filtering.",
-        "- `raw/` — machine-readable copies used for audit; do not edit.",
-        "- `source/` — manifest and provenance for this extraction.",
+        "- `source/raw/` — machine-readable copies used for audit; do not edit.",
+        "- `source/` — manifest, provenance, raw inputs, and attachments for this extraction.",
         "",
         "## Warnings",
         "",
@@ -643,7 +703,11 @@ def build(root):
     occurrences = read_csv(find_input(root, "links-occurrences.csv"))
     attachments = read_csv(find_input(root, "attachments.csv"))
     review = read_csv(find_input(root, "link-review.csv"))
-    readable_links = [readable_link_row(row) for row in links]
+    readable_links = []
+    for number, row in enumerate(sorted(links, key=link_sort_key), 1):
+        readable_row = readable_link_row(row)
+        readable_row["sequence"] = f"{number:06d}"
+        readable_links.append(readable_row)
 
     (readable / "index.md").write_text(render_index(root, title, messages, links, occurrences, pins, attachments, review, manifest), encoding="utf-8")
     (readable / "messages.md").write_text(render_messages(messages, title, manifest), encoding="utf-8")

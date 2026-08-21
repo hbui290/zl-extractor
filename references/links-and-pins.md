@@ -45,7 +45,7 @@ enumerated rows.
 
 ## Occurrence ledger and exact dedupe
 
-1. Write every unmodified occurrence to `raw/links-occurrences.csv` before dedupe.
+1. Write every unmodified occurrence to `source/raw/links-occurrences.csv` before dedupe.
 2. Recognize explicit `http(s)://` URLs and conservative bare domains (for example `make.com`). Keep a bare domain's original spelling in raw output; the readable view adds `https://` only to make it clickable.
 3. Set `canonical_url = url.strip()` only after that extraction step. Preserve scheme, host, port, path, query, fragment, encoding, and every affiliate/tracking parameter.
 4. Do not resolve redirects, fuzzy-match domains, or merge URL variants. Different parameters or paths are different canonical URLs. Ambiguous domain-like text stays in review instead of becoming a link.
@@ -63,13 +63,13 @@ observed_categories, context_alternatives
 ```
 
 Internal Zalo CDN/media references are classified as `zalo-media` and written to
-`raw/zalo-media-links.csv`, never to the user-facing link index.
+`source/raw/zalo-media-links.csv`, never to the user-facing link index.
 
 The normalized pin adapter recursively inspects the topic payload and resolved
 message, including nested params/data/payload fields, before it writes
-`raw/pins.csv` with `source=pin` and preserves
+`source/raw/pins.csv` with `source=pin` and preserves
 `pin_id`, related `message_id`, timestamp, sender, title/text, and extracted URL
-fields. The link stage also consumes `raw/link-archive.csv` when present. A
+fields. The link stage also consumes `source/raw/link-archive.csv` when present. A
 Link-archive card and the chronological message with the same `(message_id,
 exact URL)` are one message occurrence with merged source evidence
 (`message|link_archive`), not two shares. Exact duplicates inside one card are
@@ -80,7 +80,7 @@ python3 -B scripts/extract_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 -B scripts/apply_category_rules.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-If the run plan requires pins and `raw/pins.csv` is absent, stop the link phase
+If the run plan requires pins and `source/raw/pins.csv` is absent, stop the link phase
 as `BLOCKED`/`PARTIAL`; do not silently treat the missing pin panel as zero pins.
 
 ## Classification
@@ -133,8 +133,8 @@ Write the review queue after classification:
 python3 scripts/write_link_review.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-This command writes `raw/link-review.csv`; it is not read-only. Resolve
-reviewed rows in `raw/link-review-resolutions.csv` with `status=rule_verified` or
+This command writes `source/raw/link-review.csv`; it is not read-only. Resolve
+reviewed rows in `source/raw/link-review-resolutions.csv` with `status=rule_verified` or
 `resolved`. Rerunning the writer preserves resolved rows and reopens only
 unresolved rows. A resolution records evidence of review; it does not justify
 inventing a category.
@@ -142,11 +142,11 @@ inventing a category.
 The canonical machine outputs are built from deduplicated rows only:
 
 ```text
-raw/links.csv
-raw/links-occurrences.csv
-raw/zalo-media-links.csv
-raw/link-review.csv
-raw/link-review-resolutions.csv
+source/raw/links.csv
+source/raw/links-occurrences.csv
+source/raw/zalo-media-links.csv
+source/raw/link-review.csv
+source/raw/link-review-resolutions.csv
 ```
 
 Human-facing views are written separately to `readable/links.csv` and

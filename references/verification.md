@@ -13,7 +13,7 @@ If no subagent is available, run the bundled verifier and say so in the report.
 Verify all applicable invariants:
 
 - Exact user-facing URL key is `trim(url)` only; query, fragment, scheme, path, encoding, and affiliate parameters are preserved. Signed internal media queries are the deliberate redaction exception.
-- `raw/links.csv` and `readable/links.csv` have one row per canonical URL, with no duplicate canonical URLs.
+- `source/raw/links.csv` and `readable/links.csv` have one row per canonical URL, with no duplicate canonical URLs.
 - User-facing and internal-media URL partitions match the raw ledger exactly.
 - The sum of `occurrence_count` for each partition equals its raw occurrence rows, and both partitions reconcile to the total ledger.
 - Each canonical URL's `occurrence_count` reconciles to its own raw URL group; equal grand totals are not enough.
@@ -21,7 +21,7 @@ Verify all applicable invariants:
 - Internal media URLs do not leak into user-facing links.
 - Pin status, completeness, enumerated count, and end condition are recorded independently.
 - A message date boundary never suppresses pinned records; every pin outside the message window is retained with out-of-window provenance, and a pin audit is not complete from an API count alone.
-- When available, `source/link-archive-audit.json` records the Zalo Link-tab reported/enumerated card counts, status, and end condition; every `(message_id, exact URL)` from `raw/link-archive.csv` reconciles to the occurrence ledger. A missing or unreconciled archive audit keeps the export `PARTIAL`.
+- When available, `source/link-archive-audit.json` records the Zalo Link-tab reported/enumerated card counts, status, and end condition; every `(message_id, exact URL)` from `source/raw/link-archive.csv` reconciles to the occurrence ledger. A missing or unreconciled archive audit keeps the export `PARTIAL`.
 - Message IDs are unique or duplicate/update events are explained; counts match the selected snapshot.
 - CSV files round-trip with Unicode, commas, quotes, and embedded newlines intact.
 - Output paths stay inside the export; copied/downloaded binaries are non-empty and hash-match.
@@ -38,8 +38,8 @@ Verify all applicable invariants:
 - When media is in scope, the source manifest records `candidateSource=snapshot`
   (or an explicit blocked reason) and the media phase does not rescan message
   history; the temporary candidate file is absent from the final export.
-- When links/pins are in scope, `raw/messages.csv` exists, required
-  `raw/pins.csv` exists, and the link report/manifest counters include both
+- When links/pins are in scope, `source/raw/messages.csv` exists, required
+  `source/raw/pins.csv` exists, and the link report/manifest counters include both
   canonical and occurrence partitions.
 - `python3 scripts/run_plan.py validate <OUTPUT_ROOT>`, `python3 scripts/item_checkpoint.py validate <OUTPUT_ROOT>`, and `python3 scripts/phase_ledger.py validate <OUTPUT_ROOT>` pass; out-of-scope pins/media are explicitly `SKIPPED`.
 - `readable/` contains the index, chronological message view, compact link table, and pin view; optional media/review CSVs appear only when non-empty.

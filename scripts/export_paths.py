@@ -17,19 +17,36 @@ INTERNAL_MEDIA_HOST_TOKENS = ("stal", "ava-talk", "zpg-r", "photo-link-talk")
 
 def export_paths(root):
     root = Path(root).resolve()
-    new_layout = any((root / name).exists() for name in ("readable", "raw", "source"))
-    if new_layout:
+    nested_machine = root / "source" / "raw"
+    compact_machine = root / "raw"
+    nested_layout = nested_machine.exists() or (
+        (root / "source" / "manifest.json").exists() and not compact_machine.exists()
+    )
+    if nested_layout:
         return {
-            "machine": root / "raw",
+            "machine": nested_machine,
             "metadata": root / "source",
-            "categories": root / "raw" / "links-by-category",
+            "attachments": root / "source" / "attachments",
+            "categories": nested_machine / "links-by-category",
             "new_layout": True,
+            "nested_layout": True,
+        }
+    if compact_machine.exists() or (root / "readable").exists() or (root / "source").exists():
+        return {
+            "machine": compact_machine,
+            "metadata": root / "source",
+            "attachments": root / "attachments",
+            "categories": compact_machine / "links-by-category",
+            "new_layout": True,
+            "nested_layout": False,
         }
     return {
         "machine": root / "01-messages",
         "metadata": root / "03-reports",
+        "attachments": root / "attachments",
         "categories": root / "01-messages" / "links-by-category",
         "new_layout": False,
+        "nested_layout": False,
     }
 
 
@@ -73,23 +90,29 @@ def redact_internal_media_url(url):
 
 
 def contained_attachment(root, relative_path):
-    """Resolve a non-symlink attachment only when it stays under attachments/."""
+    """Resolve a non-symlink attachment only under the export's attachment root."""
     if not relative_path:
         return None
     relative = Path(str(relative_path))
     if relative.is_absolute():
         return None
     root = Path(root).resolve()
-    raw_candidate = root / relative
-    if raw_candidate.is_symlink():
-        return None
-    candidate = raw_candidate.resolve()
-    attachments = (root / "attachments").resolve()
-    try:
-        candidate.relative_to(attachments)
-    except ValueError:
-        return None
-    return candidate if candidate.is_file() else None
+    paths = export_paths(root)
+    candidates = [root / relative]
+    if paths.get("nested_layout") and relative.parts and relative.parts[0] == "attachments":
+        candidates.append(paths["attachments"] / Path(*relative.parts[1:]))
+    attachments = paths["attachments"].resolve()
+    for raw_candidate in candidates:
+        if raw_candidate.is_symlink():
+            continue
+        candidate = raw_candidate.resolve()
+        try:
+            candidate.relative_to(attachments)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def assert_source_read_only(root, metadata=None):

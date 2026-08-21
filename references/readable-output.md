@@ -8,9 +8,9 @@ messages, link reports, or a presentation suitable for non-technical readers.
 Keep two layers with different jobs:
 
 ```text
-readable/  = the first thing a person opens
-raw/       = machine-readable inputs for audit/reprocessing
-source/    = manifest and provenance; never the main reading view
+readable/    = the first thing a person opens
+source/raw/  = machine-readable inputs for audit/reprocessing
+source/      = manifest, provenance, raw inputs, and attachments; never the main reading view
 ```
 
 Do not make people read CSV/JSON to understand the conversation. Do not put
@@ -29,22 +29,22 @@ meaning or invent context.
 │   ├── links.csv
 │   ├── media.csv       (only when attachments exist)
 │   └── review.csv      (only when unresolved links exist)
-├── attachments/
-│   ├── images/
-│   ├── videos/
-│   ├── audio/
-│   ├── files/
-│   └── other/
-├── raw/
-│   ├── messages.csv
-│   ├── links.csv
-│   ├── links-occurrences.csv
-│   ├── pins.csv
-│   ├── attachments.csv
-│   ├── zalo-media-links.csv
-│   ├── link-review.csv
-│   └── link-review-resolutions.csv
 └── source/
+    ├── attachments/
+    │   ├── images/
+    │   ├── videos/
+    │   ├── audio/
+    │   ├── files/
+    │   └── other/
+    ├── raw/
+    │   ├── messages.csv
+    │   ├── links.csv
+    │   ├── links-occurrences.csv
+    │   ├── pins.csv
+    │   ├── attachments.csv
+    │   ├── zalo-media-links.csv
+    │   ├── link-review.csv
+    │   └── link-review-resolutions.csv
     ├── manifest.json
     ├── link-archive-audit.json   (when Zalo's Link tab is checked)
     ├── pin-audit.json
@@ -54,7 +54,7 @@ meaning or invent context.
 ```
 
 For compatibility, an old `01-messages/`, `02-attachments/`, and `03-reports/`
-export may be read. The renderer mirrors those files into `raw/` without
+export may be read. The renderer mirrors those files into `source/raw/` without
 deleting or editing the legacy files; signed internal Zalo media query strings
 are removed from the derived mirror.
 
@@ -98,9 +98,17 @@ STT | Link | Phân loại | Số lần | Thời gian gửi đầu tiên | Review
 
 Keep the exact URL in the CSV. Filter its `category` column instead of
 generating category subfolders. Full context, IDs, source evidence, and
-classification details remain in `raw/` and optional `review.csv`. Internal Zalo CDN URLs and signed query strings are
+classification details remain in `source/raw/` and optional `review.csv`. Internal Zalo CDN URLs and signed query strings are
 not reader-facing data: keep only normalized host/status or a fingerprint
 unless the user explicitly asks for the raw token-bearing value.
+
+The reader table is ordered by normalized platform/domain/brand family first,
+then by first-send time within that family. Equivalent hosts such as
+`vmedia.vn`/`vmedia.ai`, YouTube/`youtu.be`, Facebook variants, TikTok
+variants, and Telegram variants stay adjacent. Category is used only as a
+tie-breaker for links in the same family and timestamp. `sequence` is the
+displayed STT in that order; the original raw sequence remains in
+`source/raw/links.csv`.
 
 `readable/pins.md` is a separate pin-first view. It must show the number of
 enumerated pinned records, each record's time/sender/context, external links,
@@ -118,7 +126,7 @@ counter.
 `occurrence_count`, `first_seen`, and `review_status`. They are the default
 choice for quick sorting/filtering in Excel, Numbers, or Google Sheets. Full
 context, source IDs, classification evidence, and canonicalization details
-remain in `raw/` and `review.csv`. Do not create XLSX by default; add it only
+remain in `source/raw/` and `review.csv`. Do not create XLSX by default; add it only
 when the user needs formulas, pivots, or a styled workbook.
 
 ## Media and review presentation
