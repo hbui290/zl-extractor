@@ -16,6 +16,8 @@ find later. ZL Extractor turns that noise into a practical archive:
 - Open a human-first Markdown view grouped by day and sender.
 - Find and organize links shared in messages and pinned content, while keeping
   Zalo's separate conversation-info Link archive as its own coverage check.
+- Count Link-archive cards separately from URLs, so one multi-link card is not
+  mistaken for one URL.
 - Merge repeated shares into a clear link list while keeping the context.
 - Export images and files when you need them.
 - Skip GIFs and stickers by default so the archive stays useful.
@@ -54,7 +56,7 @@ Then ask Codex:
 
 ```text
 Use $zl-extractor to export the Zalo group "AFF Siêu Dễ - 30 Ngày Ăn Ngủ Cùng AFF".
-Include messages, links, and pinned content from 2026-07-16 onward. Include media only if I explicitly request it.
+Include messages, links, and all currently pinned content. Read messages from 2026-07-16 onward; keep pinned records older than that window separately. Include media only if I explicitly request it.
 ```
 
 The skill discovers the current machine's Zalo paths, account, conversation,
@@ -94,7 +96,9 @@ group-export/
 
 The result is designed to be portable: open `readable/index.md`, search the
 conversation, or hand the useful parts to another workflow. Raw files stay
-available without cluttering the reading experience.
+available without cluttering the reading experience. The default readable
+folder is intentionally small: `index.md`, `messages.md`, `links.csv`, and
+`pins.md`, plus `review.csv` or `media.csv` only when they contain records.
 
 ## Privacy first
 
@@ -108,9 +112,13 @@ available without cluttering the reading experience.
 
 Zalo may keep some content behind its live app or may not expose every pinned
 item, Link-archive card, or media file. ZL Extractor reports those limits
-instead of pretending the archive is complete. Message links, pinned links,
-and Link-archive links are separate sources; a visible Zalo counter is recorded
-as evidence until the cards are enumerated and reconciled.
+instead of pretending the archive is complete. Message date boundaries apply
+only to the chronological message snapshot; pinned content is audited
+independently and older pinned records remain in scope. Message links, pinned
+links, and Link-archive links are separate sources; a visible Zalo counter is
+recorded as evidence until the records are enumerated and reconciled.
+If you already collected a manual list, the bundled reconciliation check shows
+matched, missing, additional, and repeated exact URLs with line-level evidence.
 
 ## Technical documentation
 

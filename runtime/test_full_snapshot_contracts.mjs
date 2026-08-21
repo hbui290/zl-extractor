@@ -27,5 +27,10 @@ assert.match(source, /manifest\.json/, "snapshot must initialize the export mani
 assert.match(source, /sourceWriteIssued = false/, "snapshot must preserve the source-write guard");
 assert.match(source, /structured_links/, "snapshot must preserve URLs from structured message fields");
 assert.match(source, /bareTlds/, "snapshot must recognize conservative bare domains");
+assert.match(source, /row\.dName/, "snapshot must use the sender name exposed by Zalo backup rows");
+assert.match(source, /row\.fromUid/, "snapshot must use the sender id exposed by Zalo backup rows");
+assert.match(source, /'msg'/, "snapshot must preserve quoted message text");
+assert.match(source, /chat\.recommended/, "snapshot must not treat system-event or attachment titles as shared links");
+assert.doesNotMatch(source, /for \(const child of Object\.values\(value\)\) collectPublicUrls/, "snapshot must not recursively scan preview assets as links");
 
 console.log("full_snapshot_contracts=PASS");

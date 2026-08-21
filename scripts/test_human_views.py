@@ -57,14 +57,13 @@ def main():
                 "message_ids": "m1|m2", "pin_ids": "p1",
             }
         write_csv(root / "01-messages/links.csv", link_fields, [link_row])
-        write_csv(root / "01-messages/links-classified.csv", link_fields, [link_row])
         write_csv(
             root / "03-reports/pins.csv",
             ["pin_id", "timestamp", "sender", "title", "text", "urls"],
             [{"pin_id": "p1", "timestamp": "2026-07-16 10:04", "sender": "A", "title": "Pinned tool", "text": "Try make.com", "urls": "make.com"}],
         )
         write_csv(
-            root / "03-reports/links-classified-occurrences.csv",
+            root / "03-reports/links-occurrences.csv",
             ["url"],
             [{"url": "https://example.com/tool"}, {"url": "https://example.com/tool"}],
         )
@@ -89,29 +88,19 @@ def main():
         assert (root / "readable/messages.md").exists()
         assert (root / "readable/links.csv").exists()
         assert (root / "readable/pins.md").exists()
-        assert (root / "readable/media.csv").exists()
-        assert (root / "readable/review.csv").exists()
-        assert (root / "readable/links-by-category/tool-platform.md").exists()
-        assert (root / "readable/links-by-category/tool-platform.csv").exists()
+        assert not (root / "readable/media.csv").exists()
+        assert not (root / "readable/review.csv").exists()
+        assert not (root / "readable/links.md").exists()
+        assert not (root / "readable/links-by-category").exists()
         with (root / "readable/links.csv").open(newline="", encoding="utf-8") as handle:
             assert next(csv.reader(handle)) == [
-                "sequence", "category", "context_name", "url", "occurrence_count",
-            ]
-        with (root / "readable/media.csv").open(newline="", encoding="utf-8") as handle:
-            assert next(csv.reader(handle)) == [
-                "sequence", "type", "original_name", "relative_output_path", "status",
-            ]
-        with (root / "readable/review.csv").open(newline="", encoding="utf-8") as handle:
-            assert next(csv.reader(handle)) == [
-                "sequence", "url", "category", "confidence", "context_name", "review_reasons",
+                "sequence", "url", "category", "occurrence_count", "first_seen", "review_status",
             ]
         messages = (root / "readable/messages.md").read_text(encoding="utf-8")
         assert messages.index("First") < messages.index("Second")
         assert "[click](javascript:alert(1))" not in messages
-        links = (root / "readable/links.md").read_text(encoding="utf-8")
-        assert "[context](https://evil.example)" not in links
+        links = (root / "readable/links.csv").read_text(encoding="utf-8")
         assert "https://example.com/tool" in links
-        assert "### 01. example.com/tool" in links
         bare_card = "\n".join(link_card({"url": "make.com", "category": "tool-platform"}))
         assert "https://make.com" in bare_card
         assert "unavailable" not in bare_card
@@ -141,9 +130,6 @@ def main():
         with formula_path.open(newline="", encoding="utf-8") as handle:
             assert next(csv.reader(handle))[0] == "context_name"
             assert next(csv.reader(handle))[0] == "'=1+1"
-        category_dir = root / "raw/links-by-category"
-        category_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(root / "raw/links.csv", category_dir / "tool-platform.csv")
         audit = subprocess.run(
             [sys.executable, str(Path(__file__).parent / "audit_links.py"), str(root)],
             capture_output=True,

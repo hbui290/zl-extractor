@@ -13,14 +13,15 @@ If no subagent is available, run the bundled verifier and say so in the report.
 Verify all applicable invariants:
 
 - Exact user-facing URL key is `trim(url)` only; query, fragment, scheme, path, encoding, and affiliate parameters are preserved. Signed internal media queries are the deliberate redaction exception.
-- `links.csv` and every category view have one row per canonical URL, with no duplicate canonical URLs.
+- `raw/links.csv` and `readable/links.csv` have one row per canonical URL, with no duplicate canonical URLs.
 - User-facing and internal-media URL partitions match the raw ledger exactly.
 - The sum of `occurrence_count` for each partition equals its raw occurrence rows, and both partitions reconcile to the total ledger.
 - Each canonical URL's `occurrence_count` reconciles to its own raw URL group; equal grand totals are not enough.
 - Every canonical row retains all related message IDs, pin IDs, timestamps, sources, and context evidence.
 - Internal media URLs do not leak into user-facing links.
 - Pin status, completeness, enumerated count, and end condition are recorded independently.
-- When available, `source/link-archive-audit.json` records the Zalo Link-tab count, enumerated rows, status, and end condition; a missing or unreconciled archive audit keeps the export `PARTIAL`.
+- A message date boundary never suppresses pinned records; every pin outside the message window is retained with out-of-window provenance, and a pin audit is not complete from an API count alone.
+- When available, `source/link-archive-audit.json` records the Zalo Link-tab reported/enumerated card counts, status, and end condition; every `(message_id, exact URL)` from `raw/link-archive.csv` reconciles to the occurrence ledger. A missing or unreconciled archive audit keeps the export `PARTIAL`.
 - Message IDs are unique or duplicate/update events are explained; counts match the selected snapshot.
 - CSV files round-trip with Unicode, commas, quotes, and embedded newlines intact.
 - Output paths stay inside the export; copied/downloaded binaries are non-empty and hash-match.
@@ -31,6 +32,9 @@ Verify all applicable invariants:
 - For a later continuation, `source/incremental-state.json` matches the merged
   message table, has no duplicate message IDs, and its watermark is the newest
   exported `(timestamp, message_id)` tuple.
+- Mixed epoch seconds/milliseconds, ISO timestamps, and numeric message IDs use
+  one normalized ordering rule across incremental state, link merge, readable
+  rendering, snapshot, and delta runtime paths.
 - When media is in scope, the source manifest records `candidateSource=snapshot`
   (or an explicit blocked reason) and the media phase does not rescan message
   history; the temporary candidate file is absent from the final export.
@@ -38,7 +42,7 @@ Verify all applicable invariants:
   `raw/pins.csv` exists, and the link report/manifest counters include both
   canonical and occurrence partitions.
 - `python3 scripts/run_plan.py validate <OUTPUT_ROOT>`, `python3 scripts/item_checkpoint.py validate <OUTPUT_ROOT>`, and `python3 scripts/phase_ledger.py validate <OUTPUT_ROOT>` pass; out-of-scope pins/media are explicitly `SKIPPED`.
-- `readable/` contains the index, chronological message view, link views, media view, and review view.
+- `readable/` contains the index, chronological message view, compact link table, and pin view; optional media/review CSVs appear only when non-empty.
 - Human views reconcile to raw counts; they may reformat text but must not invent or drop in-scope records.
 
 If an invariant fails, fix the source transformation. Never edit only a report
@@ -53,17 +57,23 @@ python3 -B scripts/test_phase_ledger.py
 python3 -B scripts/test_run_state.py
 python3 -B scripts/test_attachment_policy.py
 python3 -B scripts/test_incremental_state.py
+python3 -B scripts/test_time_order.py
 python3 -B scripts/test_link_rules.py
 python3 -B scripts/test_human_views.py
 python3 -B scripts/test_extract_links.py
 node runtime/test_runtime_optimizations.mjs
 node runtime/test_full_snapshot_contracts.mjs
+node runtime/test_browser_runtime.mjs
+node runtime/test_link_archive_contracts.mjs
 node runtime/test_pin_contracts.mjs
 node runtime/test_media_contracts.mjs
+node runtime/test_message_order.mjs
+node runtime/test_media_stream.mjs
 node runtime/test_zalo_cdp_contracts.mjs
 swiftc -typecheck runtime/ocr_zalo_media.swift
 node --check runtime/zalo_cdp.mjs
 node --check runtime/fetch_zalo_message_snapshot.mjs
+node --check runtime/fetch_zalo_link_archive.mjs
 node --check runtime/fetch_zalo_pins.mjs
 node --check runtime/fetch_zalo_media.mjs
 python3 -m py_compile scripts/*.py
@@ -116,6 +126,11 @@ again, and confirm that completed item keys remain unchanged while only
 resumable keys are processed. Do not benchmark by adding parallel CDP calls;
 parallelize only independent local post-processing or media downloads after a
 measured canary.
+
+The bundled stress fixture should pass at both 4,000 messages/800 pins and
+12,000 messages/2,000 pins with zero audit failures. Its timings cover local
+post-processing only; live Zalo paging, network download, and OCR remain
+environment-dependent.
 
 ## Report format
 

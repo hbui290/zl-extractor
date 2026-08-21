@@ -25,16 +25,10 @@ meaning or invent context.
 ├── readable/
 │   ├── index.md
 │   ├── messages.md
-│   ├── links.md
 │   ├── pins.md
 │   ├── links.csv
-│   ├── links-by-category/
-│   │   ├── <category>.md
-│   │   └── <category>.csv
-│   ├── media.md
-│   ├── media.csv
-│   ├── review.md
-│   └── review.csv
+│   ├── media.csv       (only when attachments exist)
+│   └── review.csv      (only when unresolved links exist)
 ├── attachments/
 │   ├── images/
 │   ├── videos/
@@ -44,19 +38,19 @@ meaning or invent context.
 ├── raw/
 │   ├── messages.csv
 │   ├── links.csv
-│   ├── links-classified.csv
 │   ├── links-occurrences.csv
-│   ├── links-classified-occurrences.csv
+│   ├── pins.csv
 │   ├── attachments.csv
 │   ├── zalo-media-links.csv
 │   ├── link-review.csv
 │   └── link-review-resolutions.csv
 └── source/
     ├── manifest.json
-    ├── link-classification.json
     ├── link-archive-audit.json   (when Zalo's Link tab is checked)
-    ├── source-info.json
-    └── phase-ledger.json
+    ├── pin-audit.json
+    ├── phase-ledger.json
+    ├── run-plan.json
+    └── item-checkpoints.jsonl
 ```
 
 For compatibility, an old `01-messages/`, `02-attachments/`, and `03-reports/`
@@ -94,28 +88,24 @@ Rules:
 
 ## Link presentation
 
-`readable/links.md` contains one human-readable card per canonical URL and
-groups cards by category. Use the host/path as the stable heading; put the
-message context in a separate bullet so a mention or a long pasted sentence
-does not become a misleading title. Each card should show:
+`readable/links.csv` contains one compact row per canonical URL. Keep the
+reader-facing table focused on action and verification fields; do not place
+long message context into the table. Its columns are:
 
 ```text
-01. host/path
-Open link
-Category · confidence · occurrence count
-First/last seen · message/pin source
-Short evidence-backed context
+STT | Link | Phân loại | Số lần | Thời gian gửi đầu tiên | Review
 ```
 
-Use `links-by-category/<category>.md` as filtered views, not a second source of
-truth. Keep long public URLs behind a descriptive link label, while retaining
-the exact URL in `raw/links.csv`. Internal Zalo CDN URLs and signed query
-strings are not reader-facing data: keep only normalized host/status or a
-fingerprint unless the user explicitly asks for the raw token-bearing value.
+Keep the exact URL in the CSV. Filter its `category` column instead of
+generating category subfolders. Full context, IDs, source evidence, and
+classification details remain in `raw/` and optional `review.csv`. Internal Zalo CDN URLs and signed query strings are
+not reader-facing data: keep only normalized host/status or a fingerprint
+unless the user explicitly asks for the raw token-bearing value.
 
 `readable/pins.md` is a separate pin-first view. It must show the number of
 enumerated pinned records, each record's time/sender/context, external links,
-and internal media references separately. Do not hide pin links inside the
+message-window scope (including older out-of-window pins), and internal media
+references separately. Do not hide pin links inside the
 general link count. The index must show the message scope, user-facing unique
 links, all exact URLs, message/pin/media occurrence counts, pinned-record
 count, Link-archive status/count when available, and pin-audit status.
@@ -123,28 +113,28 @@ If the export starts at a date boundary, make that boundary visible so a
 reader does not compare a partial-period export with Zalo's all-history link
 counter.
 
-`readable/links.csv` and `readable/links-by-category/<category>.csv` are
-intentionally narrow five-column reading tables: `sequence`, `category`,
-`context_name`, `url`, and `occurrence_count`. They are the default choice for
-quick sorting/filtering in Excel, Numbers, or Google Sheets. Full context,
-timestamps, confidence, source IDs, classification evidence, and canonicalization
-details remain in Markdown/raw for audit. Do not create XLSX by default; add it
-only when the user needs formulas, pivots, or a styled workbook.
+`readable/links.csv` is an intentionally narrow six-column reading table:
+`sequence`, `url`, `category`,
+`occurrence_count`, `first_seen`, and `review_status`. They are the default
+choice for quick sorting/filtering in Excel, Numbers, or Google Sheets. Full
+context, source IDs, classification evidence, and canonicalization details
+remain in `raw/` and `review.csv`. Do not create XLSX by default; add it only
+when the user needs formulas, pivots, or a styled workbook.
 
 ## Media and review presentation
 
-- `readable/media.md` is the compact human table; `readable/media.csv` is a five-column sortable attachment table.
-- `readable/review.md` contains only unresolved classifications; `readable/review.csv` is a six-column filterable review queue.
+- `readable/media.csv` is created only when saved attachment records exist; it is a five-column sortable attachment table.
+- `readable/review.csv` is created only when unresolved classifications exist; it is a filterable review queue.
 - `readable/index.md` is the landing page: status, counts, date range when known, and links to every view.
 - Keep warnings visible on the index; do not bury `PARTIAL` or missing Pin coverage in raw JSON.
 
 ## Why this shape
 
 The layout follows patterns used by established export formats: offline
-human-readable HTML/Markdown, a title and metadata header, timestamped sender
+human-readable Markdown, a title and metadata header, timestamped sender
 blocks, date grouping, and a separate machine-readable layer. Markdown is the
-default because it stays portable and diffable; a browser UI can be added later
-without changing the raw contract.
+default because it stays portable and diffable; CSV is used only for compact
+tables that benefit from sorting or filtering.
 
 Reference examples:
 

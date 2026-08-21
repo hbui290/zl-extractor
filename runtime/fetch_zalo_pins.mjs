@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { assertBrowserExpression, runtimeExceptionMessage } from "./browser_runtime.mjs";
+import { evaluatePinAudit, pinWindowStatus } from "./pin_audit_policy.mjs";
 import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const required = (name) => {
@@ -14,6 +16,9 @@ const outputRoot = path.resolve(required("OUTPUT_ROOT"));
 const groupName = required("ZALO_GROUP_NAME").normalize("NFC").toLocaleLowerCase();
 const pinsPath = path.resolve(required("PINS_PATH"));
 const auditPath = process.env.PIN_AUDIT_PATH ? path.resolve(process.env.PIN_AUDIT_PATH) : "";
+const manifestPath = path.join(outputRoot, "source", "manifest.json");
+const sourceManifest = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, "utf8")) : {};
+const messageStartAt = String(sourceManifest.source?.startAt || "").trim();
 const maxPinsValue = String(process.env.MAX_PIN_ROWS || "").trim();
 const maxPins = maxPinsValue ? Number(maxPinsValue) : 1000;
 if (!Number.isSafeInteger(maxPins) || maxPins < 1 || maxPins > 10000) throw new Error("invalid MAX_PIN_ROWS");
@@ -56,8 +61,9 @@ const command = (method, params = {}) => new Promise((resolve, reject) => {
   ws.send(JSON.stringify({ id, method, params }));
 });
 const evaluate = async (expression) => {
+  assertBrowserExpression(expression);
   const result = await command("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-  if (result.result?.exceptionDetails) throw new Error(result.result.exceptionDetails.text || "runtime evaluation failed");
+  if (result.result?.exceptionDetails) throw new Error(runtimeExceptionMessage(result.result.exceptionDetails));
   return result.result?.result?.value;
 };
 
@@ -138,7 +144,7 @@ try {
     }
     return '';
   };
-  const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'pro', 'site', 'tech', 'tv', 'video', 'vn', 'xin', 'xyz']);
+  const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'site', 'tech', 'tv', 'vn', 'xyz']);
   const trimUrl = (value) => String(value || '').trim().replace(/[.,;:!?]+$/, '').replace(/[)\\]}]+$/, '');
   const isBareUrl = (value) => {
     const text = trimUrl(value);
@@ -188,6 +194,11 @@ try {
     });
   }
   const reportedPinCount = pick([response], ['total', 'totalCount', 'topicCount', 'totalTopics', 'totalItems']);
+  const normalizeLabel = (value) => String(value || '').replace(/\\s+/g, ' ').trim().normalize('NFC').toLocaleLowerCase();
+  const visibleConversationMatches = normalizeLabel(document.querySelector('.header-title')?.textContent) === normalizeLabel(target.displayName);
+  const visiblePin = document.querySelector('.chat-group-topic__item');
+  const morePins = /\\+(\\d+)\\s*ghim/i.exec(document.querySelector('.show-details-btn')?.textContent || '');
+  const uiReportedPinCount = visibleConversationMatches && visiblePin ? 1 + Number(morePins?.[1] || 0) : '';
   const explicitNoMore = response.noMore === true
     || response.hasMore === false
     || response.nextCursor === null
@@ -199,6 +210,7 @@ try {
     rows,
     topicCount: response.topics.length,
     reportedPinCount,
+    uiReportedPinCount,
     explicitNoMore,
   };
   })()`);
@@ -219,27 +231,33 @@ const redactInternalMediaUrl = (value) => String(value || "").replace(/https?:\/
   } catch { return token; }
 });
 
-const fields = ["pin_id", "message_id", "timestamp", "sender", "topic_type", "title", "text", "url", "urls", "source", "pin_index"];
+const fields = ["pin_id", "message_id", "timestamp", "sender", "topic_type", "title", "text", "url", "urls", "source", "pin_index", "message_scope"];
 const csvEscape = (value) => {
   const text = redactInternalMediaUrl(String(value ?? ""));
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
-const rows = (data.rows || []).map((row) => Object.fromEntries(fields.map((field) => [field, row[field] || ""])));
+const rows = (data.rows || []).map((row) => Object.fromEntries(fields.map((field) => [field, field === "message_scope" ? pinWindowStatus(row.timestamp, messageStartAt) : (row[field] || "")])));
 const csv = [fields.join(","), ...rows.map((row) => fields.map((field) => csvEscape(row[field])).join(","))].join("\n") + "\n";
 atomicWrite(pinsPath, csv);
-const reportedPinCountRaw = String(data.reportedPinCount || "").trim();
+const reportedPinCountRaw = String(data.reportedPinCount ?? "").trim();
 const reportedPinCount = /^\d+$/.test(reportedPinCountRaw) ? Number(reportedPinCountRaw) : null;
-const countMatches = Number.isSafeInteger(reportedPinCount) && reportedPinCount === rows.length;
-const pinAuditComplete = Boolean(data.explicitNoMore) || countMatches;
+const pinAudit = evaluatePinAudit({
+  rowCount: rows.length,
+  reportedPinCount,
+  uiReportedPinCount: Number.isSafeInteger(data.uiReportedPinCount) ? data.uiReportedPinCount : null,
+  explicitNoMore: Boolean(data.explicitNoMore),
+});
 const audit = {
   conversationId: String(data.conversationId || ""),
   conversationName: String(data.conversationName || ""),
-  pinAuditStatus: pinAuditComplete ? "complete" : "partial",
-  pinAuditCompleteness: pinAuditComplete ? "complete" : "unknown",
+  pinAuditStatus: pinAudit.complete ? "complete" : "partial",
+  pinAuditCompleteness: pinAudit.complete ? "complete" : "unknown",
   enumeratedPinCount: rows.length,
   uniquePinLinkCount: new Set(rows.flatMap((row) => String(row.urls || "").split("\n").filter(Boolean))).size,
+  uniquePinExternalLinkCount: new Set(rows.flatMap((row) => String(row.urls || "").split("\n").filter((url) => url && !/\.(?:z|za)dn\.vn\//i.test(url)))).size,
   reportedPinCount,
-  endCondition: pinAuditComplete ? "explicit_pin_total_or_no_more" : "missing_pin_end_signal",
+  uiReportedPinCount: Number.isSafeInteger(data.uiReportedPinCount) ? data.uiReportedPinCount : null,
+  endCondition: pinAudit.endCondition,
   adapterToken: String(data.adapterToken || ""),
 };
 if (auditPath) atomicWrite(auditPath, `${JSON.stringify(audit, null, 2)}\n`);

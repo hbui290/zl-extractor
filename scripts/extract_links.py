@@ -6,7 +6,6 @@ import csv
 import json
 import re
 from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
 
 from apply_category_rules import category_rule
@@ -17,6 +16,7 @@ from export_paths import (
     safe_category_slug,
 )
 from url_rules import find_url_occurrences
+from time_order import timestamp_sort_key
 
 
 URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
@@ -107,6 +107,9 @@ def _scan_fields(row, source):
         values = [(key, str(value)) for key, value in row.items() if key and value and (
             any(token in key.lower() for token in ("url", "link", "text", "title", "content", "description", "caption"))
         )]
+    elif source == "link_archive":
+        title = str(row.get("title", "") or "")
+        values = [("title", title)] if find_url_occurrences(title) else [("url", str(row.get("url", "") or ""))]
     else:
         fields = ("text", "message", "content", "quote_text", "quote", "reference_text", "reference", "url", "link", "structured_links")
         values = [(field, str(row.get(field, ""))) for field in fields if row.get(field)]
@@ -121,17 +124,17 @@ def _occurrences(rows, source):
         timestamp = _pick(row, "timestamp", "sendDttm", "send_time", "sent_at", "time")
         sender = _pick(row, "sender", "sender_name", "from_name")
         context_name, context_summary = _context(row, source)
-        seen_pin_urls = set()
+        seen_row_urls = set()
         normal_message_urls = set()
         structured_urls = set()
         for field_name, field_value in _scan_fields(row, source):
             for url in find_url_occurrences(field_value):
                 if not url:
                     continue
-                if source == "pin" and url in seen_pin_urls:
+                if source in {"pin", "link_archive"} and url in seen_row_urls:
                     continue
-                if source == "pin":
-                    seen_pin_urls.add(url)
+                if source in {"pin", "link_archive"}:
+                    seen_row_urls.add(url)
                 elif field_name == "structured_links":
                     if url in normal_message_urls or url in structured_urls:
                         continue
@@ -162,27 +165,31 @@ def _occurrences(rows, source):
     return result
 
 
+def _merge_archive_evidence(rows):
+    """A Link-tab card is evidence for the same message occurrence, not a new occurrence."""
+    result = []
+    by_message_url = {}
+    for row in rows:
+        key = (row["message_id"], row["canonical_url"])
+        existing = by_message_url.get(key) if row["message_id"] and row["source"] == "link_archive" else None
+        if existing:
+            existing["source"] = "|".join(_unique(existing["source"].split("|") + row["source"].split("|")))
+            continue
+        result.append(row)
+        if row["message_id"] and row["source"] == "message" and key not in by_message_url:
+            by_message_url[key] = row
+    return result
+
+
 def _time_key(value):
-    value = str(value or "").strip()
-    try:
-        number = float(value)
-        if abs(number) < 100_000_000_000:
-            number *= 1000
-        return (0, number)
-    except ValueError:
-        pass
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return (1, parsed.timestamp())
-    except ValueError:
-        return (2, value)
+    return timestamp_sort_key(value)
 
 
 def _merge(url, rows):
     message_ids = _unique([row["message_id"] for row in rows])
     pin_ids = _unique([row["pin_id"] for row in rows])
     senders = _unique([row["sender"] for row in rows])
-    sources = _unique([row["source"] for row in rows])
+    sources = _unique(part for row in rows for part in row["source"].split("|") if part)
     timestamps = sorted([row["timestamp"] for row in rows if row["timestamp"]], key=_time_key)
     contexts = _unique([row["context_name"] for row in rows])
     summaries = _unique([row["context_summary"] for row in rows])
@@ -235,7 +242,24 @@ def extract_links(root):
     if pins_required and not pins_path.exists():
         raise FileNotFoundError(f"missing required pins: {pins_path}")
     pins = read_csv(pins_path)
-    occurrences = _occurrences(messages, "message") + _occurrences(pins, "pin")
+    link_archive_path = occurrence_root / "link-archive.csv"
+    link_archive = read_csv(link_archive_path)
+    archive_audit_path = paths["metadata"] / "link-archive-audit.json"
+    if link_archive:
+        if not archive_audit_path.exists():
+            raise FileNotFoundError("missing Link archive audit for link-archive.csv")
+        archive_audit = json.loads(archive_audit_path.read_text(encoding="utf-8"))
+        manifest_path = paths["metadata"] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        expected_conversation = _pick(manifest.get("source", {}), "conversationId") or _pick(manifest, "conversationId")
+        archive_conversation = _pick(archive_audit, "conversationId")
+        if not expected_conversation or archive_conversation != expected_conversation:
+            raise ValueError("Link archive conversation does not match manifest")
+    occurrences = _merge_archive_evidence(
+        _occurrences(messages, "message")
+        + _occurrences(link_archive, "link_archive")
+        + _occurrences(pins, "pin")
+    )
     for index, row in enumerate(occurrences, 1):
         row["sequence"] = str(index).zfill(6)
 
@@ -252,25 +276,27 @@ def extract_links(root):
         row["sequence"] = str(index).zfill(6)
 
     write_csv(occurrence_root / "links-occurrences.csv", occurrences, OCCURRENCE_FIELDS)
-    write_csv(occurrence_root / "links-classified-occurrences.csv", occurrences, OCCURRENCE_FIELDS)
     write_csv(machine / "links.csv", user_links, PRIMARY_FIELDS)
-    write_csv(machine / "links-classified.csv", user_links, PRIMARY_FIELDS)
-    write_csv(occurrence_root / "zalo-media-links.csv", media_links, PRIMARY_FIELDS)
+    media_path = occurrence_root / "zalo-media-links.csv"
+    if media_links:
+        write_csv(media_path, media_links, PRIMARY_FIELDS)
+    elif media_path.exists():
+        media_path.unlink()
+    for stale_path in (machine / "links-classified.csv", occurrence_root / "links-classified-occurrences.csv"):
+        if stale_path.exists():
+            stale_path.unlink()
 
     category_dir = paths["categories"]
-    category_dir.mkdir(parents=True, exist_ok=True)
-    for old in category_dir.glob("*.csv"):
-        old.unlink()
-    by_category = {}
-    for row in user_links:
-        by_category.setdefault(row["category"], []).append(row)
-    for category, rows in sorted(by_category.items()):
-        write_csv(category_dir / f"{safe_category_slug(category)}.csv", rows, PRIMARY_FIELDS)
+    if category_dir.exists():
+        for old in category_dir.glob("*.csv"):
+            old.unlink()
+        try:
+            category_dir.rmdir()
+        except OSError:
+            pass
 
     media_url_set = {row["canonical_url"] for row in media_links}
-    report_path = paths["metadata"] / "link-classification.json"
-    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
-    report.update({
+    report = {
         "rawOccurrenceRows": len(occurrences),
         "allExactUniqueUrls": len(merged),
         "userFacingUniqueUrls": len(user_links),
@@ -284,15 +310,20 @@ def extract_links(root):
         "linkRows": len(user_links),
         "uniqueLinks": len(user_links),
         "classificationRuleSet": "exact url.strip grouping; deterministic host/path rules",
-    })
+        "categoryCounts": {
+            category: sum(row["category"] == category for row in user_links)
+            for category in sorted({row["category"] for row in user_links})
+        },
+    }
+    old_report_path = paths["metadata"] / "link-classification.json"
+    if old_report_path.exists():
+        old_report_path.unlink()
     pin_audit_path = paths["metadata"] / "pin-audit.json"
     if pin_audit_path.exists():
         pin_audit = json.loads(pin_audit_path.read_text(encoding="utf-8"))
-        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "reportedPinCount", "endCondition"):
+        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "uniquePinExternalLinkCount", "reportedPinCount", "uiReportedPinCount", "endCondition"):
             if key in pin_audit:
                 report[key] = pin_audit[key]
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     manifest_path = paths["metadata"] / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -306,8 +337,10 @@ def extract_links(root):
             "internalMediaOccurrenceRows": report["internalMediaOccurrenceRows"],
             "rawDuplicateUrlGroups": report["rawDuplicateUrlGroups"],
             "rawMergedExtraOccurrences": report["rawMergedExtraOccurrences"],
+            "categoryCounts": report["categoryCounts"],
+            "classificationRuleSet": report["classificationRuleSet"],
         })
-        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "reportedPinCount", "endCondition"):
+        for key in ("pinAuditStatus", "pinAuditCompleteness", "enumeratedPinCount", "uniquePinLinkCount", "uniquePinExternalLinkCount", "reportedPinCount", "uiReportedPinCount", "endCondition"):
             if key in report:
                 links[key] = report[key]
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

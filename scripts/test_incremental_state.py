@@ -8,7 +8,7 @@ from pathlib import Path
 from incremental_state import init_state, merge_messages, refresh_state, validate_state
 
 
-FIELDS = ["sequence", "timestamp", "message_id", "sender", "text"]
+FIELDS = ["sequence", "timestamp", "message_id", "sender", "text", "structured_links"]
 
 
 def write_csv(path, rows, fields=FIELDS):
@@ -47,7 +47,7 @@ def main():
         delta = root / "delta.csv"
         write_csv(delta, [
             {"sequence": "000002", "timestamp": "2026-08-16 10:01:00", "message_id": "m2", "sender": "B", "text": "updated"},
-            {"sequence": "000003", "timestamp": "2026-08-17 09:00:00", "message_id": "m3", "sender": "C", "text": "new"},
+            {"sequence": "000003", "timestamp": "2026-08-17 09:00:00", "message_id": "m3", "sender": "C", "text": "new", "structured_links": "https://example.com/new"},
         ])
         result = merge_messages(root, delta)
         assert result["inserted"] == 1
@@ -55,6 +55,7 @@ def main():
         assert [row["message_id"] for row in read_csv(messages)] == ["m1", "m2", "m3"]
         assert read_csv(messages)[1]["text"] == "updated"
         assert read_csv(messages)[1]["sender"] == "B"
+        assert read_csv(messages)[2]["structured_links"] == "https://example.com/new"
         refreshed = refresh_state(root)
         assert refreshed["watermark"]["message_id"] == "m3"
         assert refreshed["message_count"] == 3

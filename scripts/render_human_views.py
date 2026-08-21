@@ -28,6 +28,7 @@ from export_paths import (
     safe_category_slug,
 )
 from url_rules import find_urls, is_bare_url, parseable_url, strip_urls
+from time_order import message_id_key, timestamp_sort_key
 
 
 CATEGORY_LABELS = {
@@ -46,9 +47,7 @@ RAW_MIRRORS = {
     "pins.csv": "03-reports/pins.csv",
     "messages.txt": "01-messages/messages.txt",
     "links.csv": "01-messages/links.csv",
-    "links-classified.csv": "01-messages/links-classified.csv",
     "links-occurrences.csv": "03-reports/links-occurrences.csv",
-    "links-classified-occurrences.csv": "03-reports/links-classified-occurrences.csv",
     "zalo-media-links.csv": "03-reports/zalo-media-links.csv",
     "attachments.csv": "03-reports/attachments.csv",
     "link-review.csv": "03-reports/link-review.csv",
@@ -57,7 +56,6 @@ RAW_MIRRORS = {
 
 SOURCE_MIRRORS = {
     "manifest.json": "03-reports/manifest.json",
-    "link-classification.json": "03-reports/link-classification.json",
     "link-archive-audit.json": "03-reports/link-archive-audit.json",
 }
 
@@ -163,8 +161,8 @@ def date_part(value):
 
 def sort_key(row):
     return (
-        pick(row, "timestamp", "first_seen", "sent_at_local", "sent_at_utc", "sendDttm"),
-        pick(row, "sequence", "message_id", "msg_id", "msgId"),
+        timestamp_sort_key(pick(row, "timestamp", "first_seen", "sent_at_local", "sent_at_utc", "sendDttm")),
+        message_id_key(pick(row, "sequence", "message_id", "msg_id", "msgId")),
     )
 
 
@@ -203,7 +201,7 @@ def mirror_inputs(root):
             shutil.copy2(legacy, destination)
             mirrored.append(str(destination.relative_to(root)))
     info_path = source_dir / "source-info.json"
-    if not info_path.exists():
+    if mirrored and not info_path.exists():
         info_path.write_text(
             json.dumps(
                 {
@@ -401,20 +399,50 @@ def link_card(row, number=None):
     return lines
 
 
+def link_review_status(row):
+    confidence = pick(row, "confidence").lower()
+    alternatives = pick(row, "context_alternatives", "review_reasons")
+    return "review" if confidence == "low" or alternatives else "ok"
+
+
+def readable_link_row(row):
+    readable = dict(row, review_status=link_review_status(row))
+    readable["first_seen"] = format_time(pick(row, "first_seen", "timestamp"))
+    return readable
+
+
+def link_table_row(row, number):
+    url = pick(row, "url", "canonical_url")
+    if is_internal_media_url(url):
+        link = "_(internal media)_"
+    elif safe_http_url(url):
+        shown = markdown_literal(display_url(url))
+        link = f"[{shown}](<{display_url(url)}>)"
+    else:
+        link = markdown_table(url) or "_(unavailable)_"
+    category = CATEGORY_LABELS.get(safe_category_slug(pick(row, "category")), "Other")
+    return "| " + " | ".join([
+        str(number),
+        link,
+        markdown_table(category),
+        markdown_table(pick(row, "occurrence_count") or "1"),
+        markdown_table(format_time(pick(row, "first_seen", "timestamp"))),
+        link_review_status(row),
+    ]) + " |"
+
+
 def render_links(rows, title="Links"):
-    lines = [f"# {title}", "", "> One readable row per exact URL; repeated shares stay in the count.", ""]
+    lines = [f"# {title}", "", "> One compact table row per exact URL; repeated shares stay in the count.", ""]
     if not rows:
         return "\n".join(lines + ["No classified links were found.", ""])
-    groups = defaultdict(list)
-    for row in sorted(rows, key=sort_key):
-        groups[pick(row, "category") or "other"].append(row)
     lines.append(f"**Links:** {len(rows)}")
-    lines.append("")
-    for category in sorted(groups):
-        label = CATEGORY_LABELS.get(category, category.replace("-", " ").title())
-        lines.extend([f"## {label} ({len(groups[category])})", ""])
-        for number, row in enumerate(sorted(groups[category], key=link_sort_key), 1):
-            lines.extend(link_card(row, number))
+    lines.extend([
+        "",
+        "| STT | Link | Phân loại | Số lần | Thời gian gửi đầu tiên | Review |",
+        "|---:|---|---|---:|---|---|",
+    ])
+    for number, row in enumerate(sorted(rows, key=link_sort_key), 1):
+        lines.append(link_table_row(row, number))
     return "\n".join(lines)
 
 
@@ -458,6 +486,11 @@ def render_pins(rows):
         sender = pick(row, "sender")
         if when or sender:
             lines.append(f"- **When:** {markdown_literal(when or 'Unknown time')} · **Sender:** {markdown_literal(sender or 'Unknown sender')}")
+        scope = pick(row, "message_scope")
+        if scope == "pin_outside_message_window":
+            lines.append("- **Scope:** Pinned record outside the chronological message window")
+        elif scope == "pin_window_unknown":
+            lines.append("- **Scope:** Pinned record; message-window relation unknown")
         body = human_context(pick(row, "text"))
         if body:
             lines.append(f"- **Context:** {markdown_literal(body)}")
@@ -495,7 +528,7 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
     raw_count = link_manifest.get("rawOccurrenceRows", len(occurrences))
     source = manifest.get("source", {}) if isinstance(manifest, dict) else {}
     link_archive = read_json(find_input(root, "link-archive-audit.json", source=True))
-    archive_count = link_archive.get("reportedLinkCount")
+    archive_count = link_archive.get("reportedCardCount", link_archive.get("reportedLinkCount"))
     archive_status = str(link_archive.get("status") or "").strip().lower()
     source_start = source.get("startAt") or ""
     source_end = source.get("endAt") or ""
@@ -504,13 +537,14 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
     pin_external_occurrences = 0
     pin_media_occurrences = 0
     for row in occurrences:
-        source = pick(row, "source") or "unknown"
+        sources = split_values(pick(row, "source") or "unknown")
         if is_internal_media_url(pick(row, "url")):
-            if source == "pin":
+            if "pin" in sources:
                 pin_media_occurrences += 1
             continue
-        source_counts[source] += 1
-        if source == "pin":
+        for source_name in sources:
+            source_counts[source_name] += 1
+        if "pin" in sources:
             pin_external_occurrences += 1
             pin_external_urls.add(pick(row, "url"))
     scope = source_start or source_end or "all available messages"
@@ -535,10 +569,11 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
         f"- **Message scope:** `{scope}`",
         f"- **Messages:** {len(messages)}",
         f"- **User-facing unique links:** {len(links)}",
-        *([f"- **Zalo Link archive count:** {archive_count} (`{archive_status or 'observed'}`)"] if archive_count is not None else []),
+        *([f"- **Zalo Link archive cards:** {archive_count} (`{archive_status or 'observed'}`)"] if archive_count is not None else []),
         f"- **All exact unique URLs:** {link_manifest.get('allExactUniqueUrls', len(links))}",
         f"- **Raw link occurrences:** {raw_count}",
         f"- **Message external-link occurrences:** {source_counts.get('message', 0)}",
+        f"- **Link-archive external-link occurrences:** {source_counts.get('link_archive', 0)}",
         f"- **Pinned external-link occurrences:** {pin_external_occurrences}",
         f"- **Pinned internal-media references:** {pin_media_occurrences}",
         f"- **Pinned records:** {link_manifest.get('enumeratedPinCount', len(pins))}",
@@ -549,13 +584,10 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
         "## Read first",
         "",
         "- [Conversation](messages.md)",
-        "- [Links](links.md)",
-        "- [Pinned links](pins.md)",
         "- [Link table](links.csv)",
-        "- [Attachments](media.md)",
-        "- [Attachment table](media.csv)",
-        "- [Review queue](review.md)",
-        "- [Review table](review.csv)",
+        "- [Pinned links](pins.md)",
+        *(["- [Attachment table](media.csv)"] if attachments else []),
+        *(["- [Review table](review.csv)"] if review else []),
         "",
         "## Storage layers",
         "",
@@ -569,7 +601,7 @@ def render_index(root, title, messages, links, occurrences, pins, attachments, r
         "",
         "## Notes",
         "",
-        "The archive keeps original records in the raw layer while the readable layer groups messages by day, separates pinned links, and presents links by category. A `PARTIAL` status is an honest limitation report, not a silent omission.",
+        "The archive keeps original records in the raw layer while the readable layer groups messages by day, separates pinned links, and presents one compact row per unique link. A `PARTIAL` status is an honest limitation report, not a silent omission.",
         "",
     ])
     return "\n".join(lines)
@@ -583,7 +615,22 @@ def build(root):
     readable = root / "readable"
     category_dir = readable / "links-by-category"
     readable.mkdir(parents=True, exist_ok=True)
-    category_dir.mkdir(parents=True, exist_ok=True)
+    if (root / "source" / "manifest.json").exists():
+        for stale_path in (root / "source" / "source-info.json", root / "source" / "link-classification.json", readable / "link-reconciliation.md"):
+            if stale_path.exists():
+                stale_path.unlink()
+    for stale_name in ("links.md", "media.md", "review.md"):
+        stale_path = readable / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
+    if category_dir.exists():
+        for stale_path in category_dir.iterdir():
+            if stale_path.is_file() and stale_path.suffix in {".md", ".csv"}:
+                stale_path.unlink()
+        try:
+            category_dir.rmdir()
+        except OSError:
+            pass
 
     manifest = read_json(find_input(root, "manifest.json", source=True))
     title = clean_heading(
@@ -593,58 +640,31 @@ def build(root):
     messages = read_csv(find_input(root, "messages.csv"))
     pins = read_csv(find_input(root, "pins.csv"))
     links = read_csv(find_input(root, "links.csv"))
-    occurrences = read_csv(find_input(root, "links-classified-occurrences.csv"))
-    if not occurrences:
-        occurrences = read_csv(find_input(root, "links-occurrences.csv"))
+    occurrences = read_csv(find_input(root, "links-occurrences.csv"))
     attachments = read_csv(find_input(root, "attachments.csv"))
     review = read_csv(find_input(root, "link-review.csv"))
+    readable_links = [readable_link_row(row) for row in links]
 
     (readable / "index.md").write_text(render_index(root, title, messages, links, occurrences, pins, attachments, review, manifest), encoding="utf-8")
     (readable / "messages.md").write_text(render_messages(messages, title, manifest), encoding="utf-8")
-    (readable / "links.md").write_text(render_links(links), encoding="utf-8")
     (readable / "pins.md").write_text(render_pins(pins), encoding="utf-8")
-    (readable / "media.md").write_text(render_media(attachments, root), encoding="utf-8")
-    (readable / "review.md").write_text(render_review(review), encoding="utf-8")
     write_table_csv(
         readable / "links.csv",
-        links,
+        readable_links,
         [
-            "sequence", "category", "context_name", "url", "occurrence_count",
+            "sequence", "url", "category", "occurrence_count", "first_seen", "review_status",
         ],
     )
-    write_table_csv(
-        readable / "media.csv",
-        attachments,
-        [
-            "sequence", "type", "original_name", "relative_output_path", "status",
-        ],
-    )
-    write_table_csv(
-        readable / "review.csv",
-        review,
-        [
-            "sequence", "url", "category", "confidence", "context_name", "review_reasons",
-        ],
-    )
-    for path in category_dir.glob("*.md"):
-        path.unlink()
-    for path in category_dir.glob("*.csv"):
-        path.unlink()
-    grouped = defaultdict(list)
-    for row in links:
-        grouped[safe_category_slug(pick(row, "category"))].append(row)
-    for category, rows in sorted(grouped.items()):
-        (category_dir / f"{category}.md").write_text(
-            render_links(rows, CATEGORY_LABELS.get(category, category.replace("-", " ").title())),
-            encoding="utf-8",
-        )
-        write_table_csv(
-            category_dir / f"{category}.csv",
-            rows,
-            [
-                "sequence", "category", "context_name", "url", "occurrence_count",
-            ],
-        )
+    optional_tables = {
+        "media.csv": (attachments, ["sequence", "type", "original_name", "relative_output_path", "status"]),
+        "review.csv": (review, ["sequence", "url", "category", "confidence", "context_name", "review_reasons"]),
+    }
+    for name, (rows, fields) in optional_tables.items():
+        output = readable / name
+        if rows:
+            write_table_csv(output, rows, fields)
+        elif output.exists():
+            output.unlink()
     return {
         "title": title,
         "messages": len(messages),

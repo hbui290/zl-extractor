@@ -23,7 +23,7 @@ def main():
     assert_source_read_only(root, paths["metadata"])
     machine = paths["machine"]
     metadata = paths["metadata"]
-    source = machine / "links-classified.csv"
+    source = machine / "links.csv"
     review_root = machine if paths["new_layout"] else metadata
     output = review_root / "link-review.csv"
     resolution_path = review_root / "link-review-resolutions.csv"
@@ -65,22 +65,13 @@ def main():
         "sequence", "url", "category", "original_category", "classification_rule", "observed_categories", "context_name", "context_alternatives",
         "context_summary", "confidence", "occurrence_count", "message_ids", "review_reasons",
     ]
-    with output.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    report_path = metadata / "link-classification.json"
-    if report_path.exists():
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        report["classificationReviewRows"] = len(rows)
-        report["classificationStatus"] = "REVIEW_REQUIRED" if rows else "READY"
-        report["reviewResolutionRows"] = len(resolutions)
-        report.setdefault("verification", {})["classificationQueue"] = len(rows)
-        report["verification"]["reviewResolutionRows"] = len(resolutions)
-        resolution_output = "raw/link-review-resolutions.csv" if paths["new_layout"] else "03-reports/link-review-resolutions.csv"
-        if isinstance(report.get("outputs"), list) and resolution_output not in report["outputs"]:
-            report["outputs"].append(resolution_output)
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if rows:
+        with output.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    elif output.exists():
+        output.unlink()
     manifest_path = metadata / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

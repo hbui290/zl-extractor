@@ -15,6 +15,7 @@ from export_paths import (
     is_internal_media_url,
 )
 from run_plan import plan_path, validate_plan
+from url_rules import find_url_occurrences
 
 
 def read_csv(path):
@@ -60,14 +61,13 @@ def main():
     messages = paths["machine"]
     reports = paths["metadata"]
     occurrence_root = messages if paths["new_layout"] else reports
-    raw_path = occurrence_root / "links-classified-occurrences.csv"
+    raw_path = occurrence_root / "links-occurrences.csv"
     if not raw_path.exists():
-        raw_path = occurrence_root / "links-occurrences.csv"
+        raw_path = occurrence_root / "links-classified-occurrences.csv"
     primary_path = messages / "links.csv"
     media_path = occurrence_root / "zalo-media-links.csv"
     manifest_path = reports / "manifest.json"
     link_archive_path = reports / "link-archive-audit.json"
-    classification_report_path = reports / "link-classification.json"
     run_plan_file = plan_path(root)
     checkpoint_file = checkpoint_path(root)
 
@@ -99,6 +99,8 @@ def main():
         raw = read_csv(raw_path)
     primary = read_csv(primary_path) if primary_path.exists() else []
     media = read_csv(media_path) if media_path.exists() else []
+    archive_rows_path = occurrence_root / "link-archive.csv"
+    archive_rows = read_csv(archive_rows_path) if archive_rows_path.exists() else []
 
     raw_groups = {}
     for row in raw:
@@ -126,14 +128,11 @@ def main():
         if exact_url(row) not in resolutions
         and (row.get("confidence") == "low" or "|" in row.get("observed_categories", "") or row.get("context_alternatives"))
     }
-    category_rows = 0
     category_counts = {}
-    category_dir = paths["categories"]
-    if category_dir.exists():
-        for path in sorted(category_dir.glob("*.csv")):
-            count = len(read_csv(path))
-            category_counts[path.stem] = count
-            category_rows += count
+    for row in primary:
+        category = (row.get("category") or "other").strip() or "other"
+        category_counts[category] = category_counts.get(category, 0) + 1
+    category_rows = len(primary)
 
     if len(primary_urls) != len(set(primary_urls)):
         failures.append(f"duplicate canonical URL remains in {primary_path.relative_to(root)}")
@@ -188,28 +187,6 @@ def main():
         failures.append("review resolution ledger contains URLs absent from primary links")
 
     raw_unique = len(raw_groups)
-    expected_report = {
-        "linkRows": len(primary),
-        "uniqueLinks": len(primary),
-        "rawOccurrenceRows": len(raw),
-        "allExactUniqueUrls": raw_unique,
-        "userFacingUniqueUrls": len(raw_user),
-        "userFacingCanonicalRows": len(primary),
-        "internalMediaCanonicalRows": len(media),
-        "userFacingOccurrenceRows": sum(int_count(row) for row in primary),
-        "internalMediaOccurrenceRows": sum(int_count(row) for row in media),
-    }
-    if classification_report_path.exists():
-        classification_report = json.loads(classification_report_path.read_text(encoding="utf-8"))
-        for key, expected in expected_report.items():
-            if classification_report.get(key) != expected:
-                failures.append(f"classification report counter mismatch: {key}")
-        if "reviewResolutionRows" in classification_report and classification_report.get("reviewResolutionRows") != len(resolutions):
-            failures.append("classification report review resolution count mismatch")
-        report_categories = classification_report.get("categoryCounts")
-        if report_categories is not None and report_categories != {k: v for k, v in sorted(category_counts.items())}:
-            failures.append("classification report category counts do not match category views")
-
     manifest_links = manifest.get("links", {})
     expected_manifest = {
         "rawOccurrenceRows": len(raw),
@@ -219,6 +196,7 @@ def main():
         "internalMediaCanonicalRows": len(media),
         "userFacingOccurrenceRows": sum(int_count(row) for row in primary),
         "internalMediaOccurrenceRows": sum(int_count(row) for row in media),
+        "categoryCounts": {k: v for k, v in sorted(category_counts.items())},
     }
     for key, expected in expected_manifest.items():
         if key in manifest_links and manifest_links.get(key) != expected:
@@ -239,11 +217,31 @@ def main():
     if manifest.get("exportStatus") == "COMPLETE" and warnings:
         failures.append("manifest claims COMPLETE while audit has warnings")
 
-    archive_reported = link_archive.get("reportedLinkCount")
-    archive_enumerated = link_archive.get("enumeratedLinkCount")
+    archive_reported = link_archive.get("reportedCardCount", link_archive.get("reportedLinkCount"))
+    archive_enumerated = link_archive.get("enumeratedCardCount", link_archive.get("enumeratedLinkCount"))
+    archive_status = str(link_archive.get("status", "")).lower()
+    manifest_conversation_id = str(manifest.get("source", {}).get("conversationId") or manifest.get("conversationId") or "")
+    archive_conversation_id = str(link_archive.get("conversationId") or "")
+    if link_archive_path.exists() and manifest_conversation_id and archive_conversation_id != manifest_conversation_id:
+        failures.append("Zalo Link archive conversation does not match manifest")
+    if archive_status in {"complete", "verified"} and (archive_enumerated is None or not link_archive.get("endCondition") or not archive_rows_path.exists()):
+        failures.append("complete Zalo Link archive audit is missing count, end condition, or archive CSV")
     if archive_reported is not None and archive_enumerated is not None and archive_reported != archive_enumerated:
-        failures.append("Zalo Link archive reported count does not match enumerated rows")
-    if link_archive and str(link_archive.get("status", "")).lower() not in {"complete", "verified"}:
+        failures.append("Zalo Link archive reported card count does not match enumerated cards")
+    if archive_enumerated is not None and len(archive_rows) != archive_enumerated:
+        failures.append("Zalo Link archive CSV row count does not match enumerated cards")
+    archive_pairs = set()
+    for row in archive_rows:
+        title_urls = find_url_occurrences(row.get("title", ""))
+        urls = title_urls or find_url_occurrences(row.get("url", ""))
+        archive_pairs.update((str(row.get("message_id", "")).strip(), url) for url in urls)
+    raw_archive_pairs = {
+        (str(row.get("message_id", "")).strip(), exact_url(row))
+        for row in raw if "link_archive" in str(row.get("source", "")).split("|")
+    }
+    if link_archive and archive_pairs != raw_archive_pairs:
+        failures.append("Zalo Link archive URL/message pairs do not reconcile with the raw occurrence ledger")
+    if link_archive and archive_status not in {"complete", "verified"}:
         warnings.append("Zalo Link archive count is observed but not reconciled to exported rows")
     if not link_archive:
         warnings.append("Zalo Link archive was not enumerated; message/pin ledgers alone do not prove archive coverage")
@@ -275,8 +273,9 @@ def main():
         "pin_audit_status": pin_audit_status,
         "pin_audit_completeness": pin_audit_completeness,
         "link_archive_status": link_archive.get("status", "unknown"),
-        "link_archive_reported_count": archive_reported,
-        "link_archive_enumerated_count": archive_enumerated,
+        "link_archive_reported_card_count": archive_reported,
+        "link_archive_enumerated_card_count": archive_enumerated,
+        "link_archive_exact_url_pairs": len(archive_pairs),
         "failures": failures,
         "warnings": warnings,
     }

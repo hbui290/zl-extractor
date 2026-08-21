@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from export_paths import assert_source_read_only, has_signed_internal_media_query
+from time_order import message_id_key, watermark_sort_key
 
 
 SCHEMA_VERSION = 1
@@ -21,7 +22,7 @@ SAFE_MESSAGE_FIELDS = {
     "sequence", "timestamp", "message_id", "message_ids", "msg_id", "msgId", "messageId",
     "conversation_id", "conversation_name", "sender", "sender_id", "sender_name", "senderName",
     "msg_type", "message_type", "type", "origin_msg_type", "text", "quote", "quote_text",
-    "reference_text", "attachment_name", "original_name", "file_name", "filename", "sendDttm",
+    "reference_text", "structured_links", "attachment_name", "original_name", "file_name", "filename", "sendDttm",
     "sent_at_local", "sent_at_utc", "sent_at",
 }
 SIGNED_URL_TOKEN = re.compile(r"https?://[^\s<>'\"`]+", re.IGNORECASE)
@@ -68,23 +69,8 @@ def _timestamp(row):
     return _pick(row, TIME_FIELDS)
 
 
-def _timestamp_value(value):
-    value = str(value or "").strip()
-    if not value:
-        return float("-inf")
-    try:
-        number = float(value)
-        return number
-    except ValueError:
-        pass
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return float("-inf")
-
-
 def _sort_key(row):
-    return (_timestamp_value(_timestamp(row)), _message_id(row))
+    return (watermark_sort_key(_timestamp(row)), message_id_key(_message_id(row)))
 
 
 def _row_key(row):

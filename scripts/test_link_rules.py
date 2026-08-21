@@ -37,6 +37,9 @@ def main():
         category, rule = category_rule(url)
         assert category == expected, (url, category, rule, expected)
     assert find_url_occurrences("make.com make.com 2.5k video.mp4") == ["make.com", "make.com"]
+    assert find_url_occurrences("www.example.com/path_(x)") == ["www.example.com/path_(x)"]
+    assert strip_urls("www.example.com/path_(x)") == ""
+    assert find_url_occurrences("Ultra chưa vip.pro; gắn ở link.Video; ib nha.xin") == []
     assert find_urls("https://example.com/a make.com make.com") == ["https://example.com/a", "make.com"]
     assert strip_urls("See https://example.com/a and make.com now") == "See and now"
     print(f"rule_tests={len(CASES)} status=PASS")

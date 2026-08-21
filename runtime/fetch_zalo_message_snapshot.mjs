@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { assertBrowserExpression, runtimeExceptionMessage } from "./browser_runtime.mjs";
+import { compareMessageRows, timestampValue } from "./message_order.mjs";
 import { isAllowedMediaUrl } from "./media_candidates.mjs";
 import { waitForZaloPage } from "./zalo_cdp.mjs";
 
@@ -70,34 +72,8 @@ const atomicWrite = (filePath, content) => {
   }
 };
 
-const numberValue = (value) => {
-  const text = String(value ?? "").trim();
-  if (!text) return null;
-  const number = Number(text);
-  if (Number.isFinite(number)) return Math.abs(number) < 100_000_000_000 ? number * 1000 : number;
-  const date = Date.parse(text.replace("Z", "+00:00"));
-  return Number.isFinite(date) ? date : null;
-};
-const compareIds = (left, right) => {
-  const a = String(left ?? "");
-  const b = String(right ?? "");
-  if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
-    const leftNumber = BigInt(a);
-    const rightNumber = BigInt(b);
-    return leftNumber < rightNumber ? -1 : leftNumber > rightNumber ? 1 : 0;
-  }
-  return a.localeCompare(b);
-};
-const compareRows = (left, right) => {
-  const leftTime = numberValue(left.timestamp);
-  const rightTime = numberValue(right.timestamp);
-  if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime < rightTime ? -1 : 1;
-  if (leftTime === null && rightTime !== null) return 1;
-  if (leftTime !== null && rightTime === null) return -1;
-  return compareIds(left.message_id, right.message_id);
-};
 const inRange = (row) => {
-  const time = numberValue(row.timestamp);
+  const time = timestampValue(row.timestamp);
   if (time === null) return startAt === null && endAt === null;
   return (startAt === null || time >= startAt) && (endAt === null || time <= endAt);
 };
@@ -133,8 +109,9 @@ const command = (method, params = {}) => new Promise((resolve, reject) => {
   ws.send(JSON.stringify({ id, method, params }));
 });
 const evaluate = async (expression) => {
+  assertBrowserExpression(expression);
   const result = await command("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-  if (result.result?.exceptionDetails) throw new Error(result.result.exceptionDetails.text || "runtime evaluation failed");
+  if (result.result?.exceptionDetails) throw new Error(runtimeExceptionMessage(result.result.exceptionDetails));
   return result.result?.result?.value;
 };
 
@@ -155,9 +132,9 @@ try {
     const mediaSuffixes = ['.zdn.vn', '.zadn.vn', '.dlmd.me', '.dlfl.vn'];
     const mediaTokens = ['stal', 'ava-talk', 'zpg-r', 'photo-link-talk'];
     const isMediaUrl = (value) => {
-      if (typeof value !== 'string' || !/^https?:\\/\\//i.test(value)) return false;
+      if (typeof value !== 'string') return false;
       try {
-        const host = new URL(value).hostname.toLowerCase();
+        const host = new URL(/^https?:\\/\\//i.test(value) ? value : 'https://' + value).hostname.toLowerCase();
         return mediaSuffixes.some((suffix) => host.endsWith(suffix)) && mediaTokens.some((token) => host.includes(token));
       } catch { return false; }
     };
@@ -172,33 +149,33 @@ try {
       for (const [childKey, child] of Object.entries(value)) collect(child, childKey, depth + 1, seen, urls);
       return urls;
     };
-    const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'pro', 'site', 'tech', 'tv', 'video', 'vn', 'xin', 'xyz']);
+    const bareTlds = new Set(['ai', 'app', 'biz', 'cc', 'co', 'com', 'dev', 'digital', 'fun', 'gg', 'io', 'me', 'net', 'online', 'org', 'site', 'tech', 'tv', 'vn', 'xyz']);
     const trimToken = (value) => String(value || '').trim().replace(/[.,;:!?]+$/, '').replace(/[)\]}]+$/, '');
     const isBareUrl = (value) => {
       const text = trimToken(value);
-      if (!text || /^https?:\/\//i.test(text)) return false;
-      const host = text.split(/[/?#]/, 1)[0].toLowerCase().replace(/^www\./, '');
+      if (!text || /^https?:\\/\\//i.test(text)) return false;
+      const host = text.split(/[/?#]/, 1)[0].toLowerCase().replace(/^www\\./, '');
       const labels = host.split('.');
       return labels.length >= 2 && bareTlds.has(labels.at(-1)) && /[a-z]/i.test(labels[0]);
     };
-    const collectPublicUrls = (value, depth = 0, seen = new WeakSet(), urls = []) => {
-      if (depth > 8 || value == null || urls.length >= 200) return urls;
-      if (typeof value === 'string') {
-        const explicit = [];
-        for (const match of value.matchAll(/https?:\/\/[^\s<>"'\x60]+/gi)) {
-          const url = trimToken(match[0]);
-          if (url) { urls.push(url); explicit.push(match.index); }
-        }
-        for (const match of value.matchAll(/(?<![@\w])(?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"'\x60)\]]*)?/gi)) {
-          const url = trimToken(match[0]);
-          if (url && isBareUrl(url) && !explicit.some((start) => start <= match.index && match.index < start + url.length)) urls.push(url);
-        }
-        return urls;
+    const urlsInText = (value) => {
+      const urls = [];
+      const text = typeof value === 'string' ? value : '';
+      const explicit = [];
+      for (const match of text.matchAll(/https?:\\/\\/[^\\s<>"'\\x60]+/gi)) {
+        const url = trimToken(match[0]);
+        if (url) { urls.push(url); explicit.push([match.index, match.index + match[0].length]); }
       }
-      if (typeof value !== 'object' || seen.has(value)) return urls;
-      seen.add(value);
-      for (const child of Object.values(value)) collectPublicUrls(child, depth + 1, seen, urls);
-      return urls;
+      for (const match of text.matchAll(/(?<![@\\w])(?:www\\.)?(?:[a-z0-9-]+\\.)+[a-z]{2,}(?:\\/[^\\s<>"'\\x60)\\]]*)?/gi)) {
+        const url = trimToken(match[0]);
+        if (url && isBareUrl(url) && !explicit.some(([start, end]) => start <= match.index && match.index < end)) urls.push(url);
+      }
+      return [...new Set(urls)];
+    };
+    const collectPublicUrls = (value) => {
+      if (value == null || typeof value !== 'object') return [];
+      const titleUrls = urlsInText(value.title);
+      return titleUrls.length ? titleUrls : urlsInText(value.href);
     };
     const collectText = (value, depth = 0, seen = new WeakSet()) => {
       if (depth > 3 || value == null) return '';
@@ -206,7 +183,7 @@ try {
       if (typeof value !== 'object' || seen.has(value)) return '';
       seen.add(value);
       const parts = [];
-      for (const key of ['text', 'messageText', 'caption', 'description', 'body']) {
+      for (const key of ['text', 'messageText', 'msg', 'caption', 'description', 'body']) {
         if (typeof value[key] === 'string' && value[key].trim()) parts.push(value[key]);
         else if (value[key] && typeof value[key] === 'object') parts.push(collectText(value[key], depth + 1, seen));
       }
@@ -214,6 +191,7 @@ try {
     };
     const scalar = (...values) => values.find((value) => value != null && String(value).trim()) ?? '';
     const stringValue = (...values) => values.find((value) => typeof value === 'string' && value.trim()) ?? '';
+    const senderNames = new Map((target.topMember || []).filter((member) => member?.id && member?.dName).map((member) => [String(member.id), String(member.dName)]));
     const timeValue = (value) => {
       const number = Number(String(value || '').trim());
       if (Number.isFinite(number)) return Math.abs(number) < 100000000000 ? number * 1000 : number;
@@ -229,13 +207,17 @@ try {
           .sort((a, b) => ({ hdUrl: 0, oriUrl: 1, normalUrl: 2, thumbUrl: 3 }[a.key] ?? 9) - ({ hdUrl: 0, oriUrl: 1, normalUrl: 2, thumbUrl: 3 }[b.key] ?? 9))
           .map((candidate) => [candidate.url, candidate]),
       ).values()];
-      const sender = String(scalar(row.senderName, row.fromName, row.sender?.displayName));
-      const senderId = String(scalar(row.senderId, row.fromId, row.sender?.id));
+      const senderId = String(scalar(row.fromUid, row.senderId, row.fromId, row.sender?.id));
+      const sender = String(scalar(row.dName, row.senderName, row.fromName, row.sender?.displayName));
+      if (senderId && sender) senderNames.set(senderId, sender);
+      if (row.quote?.ownerId && row.quote?.fromD) senderNames.set(String(row.quote.ownerId), String(row.quote.fromD));
       const attachmentName = stringValue(row.fileName, row.file_name, row.attachmentName, row.attachment?.name, row.file?.name);
       const attachmentMime = stringValue(row.mimeType, row.mime_type, row.contentType, row.attachment?.mimeType, row.file?.mimeType);
       const textParts = [row.text, row.message, row.content].map((value) => collectText(value)).filter(Boolean);
-      const text = [...new Set(textParts)].join('\n');
-      const structuredLinks = [...new Set(collectPublicUrls({ text: row.text, message: row.message, content: row.content, extra: row.extra, ev: row.ev, paramsExt: row.paramsExt, properties: row.properties }))].filter((url) => !isMediaUrl(url));
+      const text = [...new Set(textParts)].join('\\n');
+      const structuredLinks = String(row.originMsgType || '') === 'chat.recommended'
+        ? collectPublicUrls(row.message).filter((url) => !isMediaUrl(url))
+        : [];
       return {
         timestamp: String(scalar(row.sendDttm, row.timestamp, row.sendTime)),
         message_id: messageId,
@@ -248,7 +230,7 @@ try {
         text,
         quote_text: collectText(row.quoteText || row.quote_text || row.quote),
         reference_text: collectText(row.referenceText || row.reference_text || row.reference),
-        structured_links: structuredLinks.join('\n'),
+        structured_links: structuredLinks.join('\\n'),
         attachment_name: attachmentName,
         media: ranked.map((candidate, index) => ({
           msgId: messageId,
@@ -306,6 +288,7 @@ try {
       cursor = lastId;
     }
     if (pages >= ${maxPages} && !stoppedAtStart && !completed) throw new Error('message_page_cap_exceeded:' + ${maxPages});
+    for (const row of rows) if (!row.sender) row.sender = senderNames.get(row.sender_id) || '';
     return { conversationId, rows, media, pages, scannedMessages, stoppedAtStart, completed };
   })()`);
 } finally {
@@ -330,7 +313,7 @@ const normalizedRows = (data.rows || []).map((row) => ({
 })).filter((row) => row.message_id && inRange(row));
 const uniqueRows = new Map();
 for (const row of normalizedRows) if (!uniqueRows.has(row.message_id)) uniqueRows.set(row.message_id, row);
-const rows = [...uniqueRows.values()].sort(compareRows);
+const rows = [...uniqueRows.values()].sort(compareMessageRows);
 const csvFields = ["timestamp", "message_id", "conversation_id", "conversation_name", "sender", "sender_id", "msg_type", "origin_msg_type", "text", "quote_text", "reference_text", "structured_links", "attachment_name"];
 const csvEscape = (value) => {
   const text = String(value ?? "");

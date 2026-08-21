@@ -1,9 +1,14 @@
 """Resolve canonical v2 or legacy ZL Extractor paths."""
 
+import csv
 import json
 import re
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+
+csv.field_size_limit(sys.maxsize)
 
 
 INTERNAL_MEDIA_SUFFIXES = (".zdn.vn", ".zadn.vn", ".dlmd.me", ".dlfl.vn")

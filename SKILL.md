@@ -54,9 +54,10 @@ message snapshot per run. Keep the user's scope in a machine-readable run plan;
 the AI must not infer extra phases after the run starts. Do not write a new
 inline extractor for each group.
 Use the bundled version-sensitive adapters under `RUNTIME_ROOT`. The snapshot
-and delta adapters preserve URLs found in alternate structured message fields
-under the normalized `structured_links` column; the post-processor consumes
-that column without duplicating URLs already present in message text. If the
+and delta adapters preserve URLs from Zalo's actual `chat.recommended` link
+cards under the normalized `structured_links` column; system-event titles,
+attachment names, thumbnails, and preview assets are excluded. The
+post-processor consumes that column without duplicating URLs already present in message text. If the
 required adapter is unavailable or its module contract no longer matches the
 installed Zalo build, stop with `BLOCKED` and report that exact gap instead of
 starting an unbounded ad-hoc scrape.
@@ -159,11 +160,17 @@ date alone: message IDs break ties and prevent same-second duplicates. Always
 resolve and verify the exact conversation again. If the runtime cannot prove
 ordered pagination, use a full snapshot instead of guessing.
 
+All ordering paths normalize epoch seconds, epoch milliseconds, ISO timestamps,
+and date-time strings before comparing. Numeric message IDs are compared
+numerically, not lexically; a UI/API pin-count mismatch remains `PARTIAL` even
+when an API end marker says there are no more rows.
+
 The bundled delta adapter consumes the watermark, verifies the resolved
 conversation ID, and writes only normalized fields to temporary files:
 
 ```bash
 ZALO_CDP_PORT="$CDP_PORT" \
+ZALO_ACCOUNT_ID="$ZALO_ACCOUNT_ID" \
 ZALO_GROUP_NAME="$GROUP_NAME" \
 INCREMENTAL_STATE_PATH="$OUTPUT_ROOT/source/incremental-state.json" \
 MESSAGES_DELTA_PATH="$TEMP_ROOT/messages-delta.csv" \
@@ -262,6 +269,10 @@ Guard against a repeated cursor and cap pages. Normalize only the fields needed
 for output (`conversation_id`, message ID, timestamps, sender, type, text,
 quote/reference, and attachment metadata), then sort oldest-to-newest by
 `sendDttm`, `msgId`. Message-text links are incomplete until the pin audit runs.
+`START_AT` and `END_AT` apply only to the chronological message snapshot; they
+never filter the independent pin panel. A pin whose original message is
+outside the window must still be retained as a pin record and marked
+out-of-window in provenance.
 Recognize explicit `http(s)://` URLs and conservative bare domains; keep
 ambiguous domain-like prose in the review queue instead of guessing.
 Use one runtime call per page, not one CDP evaluation per message. Record the
@@ -279,15 +290,22 @@ call `loadMessagesForBackup` again. A missing or invalid candidate file is
 validation allows only known Zalo media host families; external URLs are
 rejected before any CDP cookie lookup.
 
+Media downloads stream into a temporary file, compute SHA-256 while receiving,
+validate the magic bytes/MIME, then rename into the final attachment folder.
+Existing files are hash-checked before reuse. This keeps large videos/files out
+of RAM and leaves no partial final binary after an interrupted download.
+
 ### 3. Process links and pinned content
 
 When links are in scope, read [references/links-and-pins.md](references/links-and-pins.md)
 before extraction. It defines the exact pin audit, URL dedupe boundary,
 context merge, classification rules, review queue, and link output schema.
 
-Audit the exact conversation's pin panel with the bundled read-only adapter. It
-writes a temporary normalized pin table and a small audit record; move only the
-table into `raw/`:
+Open the exact conversation and its visible pin panel first, then audit it with
+the bundled read-only adapter. The visible panel is used only as a count
+evidence check; the adapter still reads the bounded pin service. It writes a
+temporary normalized pin table and a small audit record; move only the table
+into `raw/`:
 
 ```bash
 ZALO_CDP_PORT="$CDP_PORT" \
@@ -301,12 +319,34 @@ mv "$TEMP_ROOT/pins.csv" "$OUTPUT_ROOT/raw/pins.csv"
 
 If the app's pin service cannot resolve the exact conversation or does not
 return an array from the bounded read-only call, record `BLOCKED`/`PARTIAL` and
-do not claim pin completeness.
+do not claim pin completeness. An API-reported row count alone is not an end
+signal; require an exact UI total or an explicit no-more/end marker. When a
+visible pin panel shows older records than the message window, hydrate the pin
+record independently and keep it even when its original message is outside
+`START_AT`.
+If the exact pin panel is not visible or its count cannot be bound to the
+requested conversation, keep the audit `PARTIAL`; do not treat the API row
+count as a substitute.
 
 The conversation-info `Link` tab is a separate source from both the message
-snapshot and the pinned-message panel. When the current runtime exposes it,
-enumerate it into `source/link-archive-audit.json` with the reported UI count,
-enumerated row count, and an explicit end condition. If it is unavailable,
+snapshot and the pinned-message panel. Open the exact conversation's full
+`Link` view, then use the bundled adapter:
+
+```bash
+ZALO_CDP_PORT="$CDP_PORT" \
+ZALO_GROUP_NAME="$GROUP_NAME" \
+OUTPUT_ROOT="$OUTPUT_ROOT" \
+LINK_ARCHIVE_PATH="$OUTPUT_ROOT/raw/link-archive.csv" \
+LINK_ARCHIVE_AUDIT_PATH="$OUTPUT_ROOT/source/link-archive-audit.json" \
+ZALO_REPORTED_LINK_COUNT="${ZALO_REPORTED_LINK_COUNT:-}" \
+node "$RUNTIME_ROOT/fetch_zalo_link_archive.mjs"
+```
+
+The Zalo number is a **card count**, not a URL count: one card may contain many
+exact URLs. The adapter scrolls to a stable end, writes one row per card, and
+records `reportedCardCount`, `enumeratedCardCount`, and the end condition. The
+link extractor reads URLs from the card title and uses `href` only when the
+title has no URL; preview images/assets are never treated as shared links. If it is unavailable,
 keep the export `PARTIAL` and show that gap in `readable/index.md`; never use
 the message/pin totals as a substitute for the Link-tab count.
 
@@ -327,11 +367,18 @@ Run these static smoke tests once after changing the skill or renderer:
 python3 -B scripts/test_link_rules.py
 python3 -B scripts/test_human_views.py
 python3 -B scripts/test_incremental_state.py
+python3 -B scripts/test_time_order.py
 python3 -B scripts/test_extract_links.py
+node runtime/test_browser_runtime.mjs
+node runtime/test_message_order.mjs
+node runtime/test_link_archive_contracts.mjs
 node runtime/test_full_snapshot_contracts.mjs
 node runtime/test_pin_contracts.mjs
 node runtime/test_media_contracts.mjs
+node runtime/test_media_stream.mjs
 node runtime/test_zalo_cdp_contracts.mjs
+python3 -B scripts/test_stress_pipeline.py --messages 4000 --pins 800
+python3 -B scripts/test_stress_pipeline.py --messages 12000 --pins 2000
 ```
 
 For each export, run only the data-dependent pipeline after the runtime
@@ -346,7 +393,16 @@ python3 -B scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 python3 -B scripts/audit_links.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-`write_link_review.py` writes review files. `audit_links.py` is read-only and
+When the user supplies a manual URL list, reconcile exact URL coverage and
+keep line-level occurrence evidence instead of comparing totals by eye:
+
+```bash
+python3 -B scripts/reconcile_link_baseline.py "$OUTPUT_ROOT" "$MANUAL_LINKS_FILE"
+```
+
+Repeated entries are retained as `OCCURRENCE_NOT_PROVEN` when Zalo does not
+independently show a matching second occurrence; they do not turn a present
+exact URL into a false missing-link claim. `write_link_review.py` writes review files. `audit_links.py` is read-only and
 returns `0=PASS`, `2=PARTIAL`, `1=FAIL`. It checks exact per-URL occurrence
 counts, not only partition totals, and rejects signed internal media queries.
 
@@ -377,19 +433,16 @@ Generate the human views after the normalized message/link/media files exist:
 python3 scripts/render_human_views.py <OUTPUT_ROOT>/<slug>-export-<timestamp>
 ```
 
-`readable/messages.md` is chronological and grouped by local date. `links.md`,
-`pins.md`, and `links-by-category/` show stable URL headings, context, category,
-confidence, occurrences, and clickable labels. `pins.md` is the separate
-reader-facing pin audit; external links and internal media references are shown
-separately and must not be hidden inside the general link count.
-`readable/links.csv`
-and the category CSVs are intentionally
-narrow, five-column, one-row-per-canonical-URL reading tables: category,
-context, URL, and occurrence count. `media.csv` has five columns and
-`review.csv` has six; both use the same compact-reader principle. Keep confidence, IDs,
-classification evidence, hashes, and other provenance in `raw/` or the Markdown
-review view; never make a reader open raw CSV to understand the conversation. Do
-not create XLSX unless formulas, pivots, or a styled workbook are explicitly
+`readable/messages.md` is chronological and grouped by local date. `links.csv`
+is the single compact, one-row-per-canonical-URL reader table with URL,
+category, occurrence count, first-send time, and review status. `pins.md` is
+the separate reader-facing pin audit; external links and internal media
+references are shown separately and must not be hidden inside the general link
+count. `media.csv` and `review.csv` are created only when they contain rows.
+Long context and source evidence stay in `raw/` and the optional review table.
+Keep confidence, IDs, classification evidence, hashes, and other provenance in
+the raw layer; never make a reader open raw CSV to understand the conversation.
+Do not create XLSX unless formulas, pivots, or a styled workbook are explicitly
 requested. The renderer escapes untrusted message/context Markdown, protects
 formula-like readable CSV cells, preserves external URLs exactly, and redacts
 internal signed Zalo media URLs. It is non-destructive and can mirror a legacy

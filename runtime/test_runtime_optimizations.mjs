@@ -25,6 +25,7 @@ assert.match(media, /missing ZALO_GROUP_NAME/, "media fetch must not silently de
 assert.match(media, /missing OUTPUT_ROOT/, "media fetch must not write to a host-specific default");
 assert.match(delta, /INCREMENTAL_STATE_PATH/, "delta fetch must consume the saved state");
 assert.match(delta, /MESSAGES_DELTA_PATH/, "delta fetch must write a normalized delta");
+assert.match(delta, /ZALO_ACCOUNT_ID/, "delta fetch must use the verified active account rather than a group member id");
 assert.match(delta, /loadMessagesForBackup/, "delta fetch must use the logged-in runtime");
 assert.match(delta, /waitForZaloPage/, "delta fetch must wait for a ready renderer");
 assert.match(delta, /watermark/, "delta fetch must stop at the saved watermark");
@@ -36,6 +37,11 @@ assert.match(delta, /quote_text/, "delta fetch must preserve quote context");
 assert.match(delta, /attachment_name/, "delta fetch must preserve attachment metadata");
 assert.match(delta, /structured_links/, "delta fetch must preserve URLs from structured message fields");
 assert.match(delta, /bareTlds/, "delta fetch must recognize conservative bare domains");
+assert.match(delta, /row\.dName/, "delta fetch must use the sender name exposed by Zalo backup rows");
+assert.match(delta, /row\.fromUid/, "delta fetch must use the sender id exposed by Zalo backup rows");
+assert.match(delta, /'msg'/, "delta fetch must preserve quoted message text");
+assert.match(delta, /chat\.recommended/, "delta fetch must not treat system-event or attachment titles as shared links");
+assert.doesNotMatch(delta, /for \(const child of Object\.values\(value\)\) collectPublicUrls/, "delta fetch must not recursively scan preview assets as links");
 
 const candidateDir = fs.mkdtempSync(path.join(os.tmpdir(), "zl-candidates-"));
 const candidatePath = path.join(candidateDir, "media-candidates.jsonl");

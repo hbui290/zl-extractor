@@ -127,7 +127,7 @@ def main():
     occurrence_root = messages if paths["new_layout"] else paths["metadata"]
     reports = paths["metadata"]
 
-    raw_classified_path = occurrence_root / "links-classified-occurrences.csv"
+    raw_classified_path = occurrence_root / "links-occurrences.csv"
     raw_classified = [update_row(row) for row in read_csv(raw_classified_path)]
     write_csv(raw_classified_path, raw_classified)
 
@@ -150,52 +150,46 @@ def main():
         row["sequence"] = str(index).zfill(6)
 
     write_csv(messages / "links.csv", primary)
-    write_csv(messages / "links-classified.csv", primary)
-    write_csv(media_path, media)
+    if media:
+        write_csv(media_path, media)
+    elif media_path.exists():
+        media_path.unlink()
+    for stale_path in (messages / "links-classified.csv", occurrence_root / "links-classified-occurrences.csv", reports / "link-classification.json"):
+        if stale_path.exists():
+            stale_path.unlink()
     category_dir = paths["categories"]
-    category_dir.mkdir(parents=True, exist_ok=True)
-    for old in category_dir.glob("*.csv"):
-        old.unlink()
-    for category in sorted({safe_category_slug(row["category"]) for row in primary}):
-        write_csv(category_dir / f"{category}.csv", [row for row in primary if safe_category_slug(row["category"]) == category])
+    if category_dir.exists():
+        for old in category_dir.glob("*.csv"):
+            old.unlink()
+        try:
+            category_dir.rmdir()
+        except OSError:
+            pass
 
-    report_path = reports / "link-classification.json"
-    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
-    report["categoryCounts"] = {category: sum(row["category"] == category for row in primary) for category in sorted({row["category"] for row in primary})}
-    report["linkRows"] = len(primary)
-    report["uniqueLinks"] = len(primary)
-    report["rawOccurrenceRows"] = len(raw_classified)
-    report["allExactUniqueUrls"] = len(raw_groups)
-    report["rawDuplicateUrlGroups"] = sum(len(rows) > 1 for rows in raw_groups.values())
-    report["rawMergedExtraOccurrences"] = sum(len(rows) - 1 for rows in raw_groups.values() if len(rows) > 1)
-    report["userFacingUniqueUrls"] = len(raw_groups) - len(raw_media)
-    report["mediaUniqueUrls"] = len(raw_media)
-    report["userFacingCanonicalRows"] = len(primary)
-    report["internalMediaCanonicalRows"] = len(media)
-    report["userFacingOccurrenceRows"] = sum(int(row.get("occurrence_count") or 1) for row in primary)
-    report["internalMediaOccurrenceRows"] = sum(int(row.get("occurrence_count") or 1) for row in media)
-    report["classificationRuleSet"] = "host/path precedence; media boundary first; exact URL grouping unchanged"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    category_counts = {category: sum(row["category"] == category for row in primary) for category in sorted({row["category"] for row in primary})}
+    user_facing_occurrences = sum(int(row.get("occurrence_count") or 1) for row in primary)
+    media_occurrences = sum(int(row.get("occurrence_count") or 1) for row in media)
+    classification_rule_set = "host/path precedence; media boundary first; exact URL grouping unchanged"
 
     manifest_path = reports / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest.setdefault("links", {})["categoryCounts"] = report["categoryCounts"]
+        manifest.setdefault("links", {})["categoryCounts"] = category_counts
         manifest["links"]["userFacingCanonicalRows"] = len(primary)
         manifest["links"]["internalMediaCanonicalRows"] = len(media)
-        manifest["links"]["userFacingOccurrenceRows"] = report["userFacingOccurrenceRows"]
-        manifest["links"]["internalMediaOccurrenceRows"] = report["internalMediaOccurrenceRows"]
-        manifest["links"]["rawOccurrenceRows"] = report["rawOccurrenceRows"]
-        manifest["links"]["allExactUniqueUrls"] = report["allExactUniqueUrls"]
-        manifest["links"]["rawDuplicateUrlGroups"] = report["rawDuplicateUrlGroups"]
-        manifest["links"]["rawMergedExtraOccurrences"] = report["rawMergedExtraOccurrences"]
-        manifest["links"]["classificationRuleSet"] = report["classificationRuleSet"]
+        manifest["links"]["userFacingOccurrenceRows"] = user_facing_occurrences
+        manifest["links"]["internalMediaOccurrenceRows"] = media_occurrences
+        manifest["links"]["rawOccurrenceRows"] = len(raw_classified)
+        manifest["links"]["allExactUniqueUrls"] = len(raw_groups)
+        manifest["links"]["rawDuplicateUrlGroups"] = sum(len(rows) > 1 for rows in raw_groups.values())
+        manifest["links"]["rawMergedExtraOccurrences"] = sum(len(rows) - 1 for rows in raw_groups.values() if len(rows) > 1)
+        manifest["links"]["classificationRuleSet"] = classification_rule_set
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     print(json.dumps({
         "primary_rows": len(primary),
         "media_rows": len(media),
-        "category_counts": report["categoryCounts"],
+        "category_counts": category_counts,
         "host_rule_overrides": sum(row["classification_rule"] != "existing_classifier" for row in all_rows),
     }, ensure_ascii=False, indent=2))
 

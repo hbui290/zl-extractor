@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadMediaCandidates } from "./media_candidates.mjs";
+import { sha256File, streamResponseToFile } from "./media_stream.mjs";
 import { waitForZaloPage } from "./zalo_cdp.mjs";
 
 const required = (name) => {
@@ -34,6 +35,8 @@ const outputDirectories = {
   other: "attachments/other",
 };
 for (const directory of Object.values(outputDirectories)) fs.mkdirSync(path.join(outputRoot, directory), { recursive: true });
+const temporaryDirectory = path.join(outputRoot, ".media-tmp");
+fs.mkdirSync(temporaryDirectory, { recursive: true });
 
 const page = await waitForZaloPage(port);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -147,6 +150,7 @@ const results = new Array(unique.size);
 const entries = [...unique.entries()];
 const downloadOne = async ([url, row], index) => {
   const hash = urlHash(url);
+  let temporary = "";
   const mimeHint = String(row.mime || "").split(";", 1)[0].toLowerCase();
   const extensionHint = path.extname(row.originalName || "").toLowerCase();
   const kindHint = mediaKind(row, mimeHint, extensionHint);
@@ -170,18 +174,30 @@ const downloadOne = async ([url, row], index) => {
   if (kindHint === "policy_skip") return { ...base, status: "skipped_by_policy", error: "GIF/sticker excluded by policy" };
   try {
     const response = await fetchOne(url);
-    const buffer = Buffer.from(await response.arrayBuffer());
+    temporary = path.join(temporaryDirectory, `${hash}-${process.pid}-${index}.part`);
+    const streamed = await streamResponseToFile(response, temporary);
     const mime = String(response.headers.get("content-type") || mimeHint).split(";", 1)[0].toLowerCase();
-    const extension = magicExtension(buffer, mime) || mimeExtensions.get(mime) || "";
-    if (!extension || extension === ".gif") return { ...base, status: extension === ".gif" ? "skipped_by_policy" : "unreadable", error: extension === ".gif" ? "GIF excluded by policy" : `unknown_binary_${mime || "unknown"}` };
+    const extension = magicExtension(streamed.head, mime) || mimeExtensions.get(mime) || "";
+    if (!extension || extension === ".gif") {
+      fs.rmSync(temporary, { force: true });
+      temporary = "";
+      return { ...base, status: extension === ".gif" ? "skipped_by_policy" : "unreadable", error: extension === ".gif" ? "GIF excluded by policy" : `unknown_binary_${mime || "unknown"}` };
+    }
     const kind = mediaKind(row, mime, extension);
     const fileName = `${safeName(row.msgId, "media")}-${String(row.ordinal || index + 1).padStart(2, "0")}-${hash}${extension}`;
     const relative = path.join(outputDirectories[kind] || outputDirectories.other, fileName);
     const target = path.join(outputRoot, relative);
-    if (!fs.existsSync(target)) fs.writeFileSync(target, buffer, { flag: "wx" });
-    const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
-    return { ...base, type: row.mediaType || mime || kind, relative_output_path: relative, size: buffer.length, sha256, status: "downloaded", error: "" };
+    if (fs.existsSync(target)) {
+      const existingHash = await sha256File(target);
+      if (existingHash === streamed.sha256) fs.rmSync(temporary, { force: true });
+      else fs.renameSync(temporary, target);
+    } else {
+      fs.renameSync(temporary, target);
+    }
+    temporary = "";
+    return { ...base, type: row.mediaType || mime || kind, relative_output_path: relative, size: streamed.size, sha256: streamed.sha256, status: "downloaded", error: "" };
   } catch (error) {
+    if (temporary) fs.rmSync(temporary, { force: true });
     const status = Number(error?.status || 0);
     return { ...base, status: status === 404 ? "failed_404" : status >= 500 ? "failed_500" : "network_error", error: String(error?.message || error).slice(0, 160) };
   }

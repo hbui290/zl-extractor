@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 EXPLICIT_URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 BARE_URL_RE = re.compile(
     r"(?<![@\w])(?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}"
-    r"(?:/[^\s<>\"'`)]*)?",
+    r"(?:/[^\s<>\"'`]*)?",
     re.IGNORECASE,
 )
 
@@ -15,8 +15,8 @@ BARE_URL_RE = re.compile(
 # do not become links. Add a suffix only when a real export demonstrates it.
 BARE_TLDS = frozenset({
     "ai", "app", "biz", "cc", "co", "com", "dev", "digital", "fun",
-    "gg", "io", "me", "net", "online", "org", "pro", "site", "tech",
-    "tv", "video", "vn", "xin", "xyz",
+    "gg", "io", "me", "net", "online", "org", "site", "tech",
+    "tv", "vn", "xyz",
 })
 
 
